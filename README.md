@@ -848,9 +848,40 @@ Services 카드의 **Discover More 버튼(현재 링크가 비어 있음)** 을 
 | Best Practices  | 웹 표준·보안 권장사항 준수              |
 | SEO             | 검색 엔진 최적화                        |
 
+### 측정 결과
+
+**모바일(Mobile)**
+
+![Lighthouse 모바일 결과](docs/images/week3-lighthouse-mobile.png)
+
+**데스크톱(Desktop)**
+
+![Lighthouse 데스크톱 결과](docs/images/week3-lighthouse-desktop.png)
+
+| 카테고리       | Mobile | Desktop | 차이  |
+| -------------- | ------ | ------- | ----- |
+| **Performance**    | **73** | **95**  | **-22** |
+| Accessibility  | 88     | 83      | +5    |
+| Best Practices | 89     | 93      | -4    |
+| SEO            | 91     | 91      | 0     |
+
+Performance 세부 지표
+
+| 지표                              | Mobile    | Desktop | 의미                                    |
+| --------------------------------- | --------- | ------- | --------------------------------------- |
+| First Contentful Paint (FCP)      | 2.6 s     | 0.9 s   | 첫 내용이 그려지기까지의 시간            |
+| **Largest Contentful Paint (LCP)** | **6.1 s** | 1.3 s   | 가장 큰 요소(= Hero 이미지)가 그려진 시점 |
+| Speed Index                       | 3.6 s     | 1.4 s   | 화면이 채워지는 체감 속도                |
+| Total Blocking Time (TBT)         | 0 ms      | 0 ms    | 메인 스레드가 막힌 시간                  |
+| Cumulative Layout Shift (CLS)     | 0.002     | 0.001   | 레이아웃이 밀리는 정도                   |
+
+> Performance만 **22점** 차이가 나고, SEO는 동일하다.
+> 즉 **HTML 구조의 문제가 아니라 "로딩 속도"의 문제**라는 뜻이다.
+> 특히 모바일 LCP가 **6.1초** — 권장 기준(2.5초)의 두 배를 넘는다.
+
 ### 2단계. PC와 모바일의 성능 차이가 나는 이유
 
-**같은 페이지인데 모바일 점수가 더 낮게 나온다.** 이유는 Lighthouse가 두 모드에서 **다른 조건으로 측정**하기 때문이다.
+**같은 페이지, 같은 서버인데 모바일 점수만 73점으로 낮게 나온다.** 이유는 Lighthouse가 두 모드에서 **다른 조건으로 측정**하기 때문이다.
 
 | 항목        | Desktop                     | Mobile                                    |
 | ----------- | --------------------------- | ----------------------------------------- |
@@ -858,48 +889,79 @@ Services 카드의 **Discover More 버튼(현재 링크가 비어 있음)** 을 
 | 네트워크    | 빠른 유선 기준              | **저속 4G로 제한(network throttling)**     |
 | 화면 크기   | 넓음 (한 번에 많이 보임)    | 좁음 → 화면에 먼저 그려야 할 요소가 달라짐 |
 
-즉 **모바일 점수는 "느린 폰 + 느린 네트워크"를 가정한 점수**라서 낮게 나오는 것이 정상이다.
-그래서 개선할 부분을 찾을 때는 **모바일 보고서를 기준**으로 보는 것이 맞다.
+TBT가 양쪽 다 0ms인 점이 중요한 증거다. **자바스크립트 연산이 무거워서 느린 게 아니라**,
+파일을 **내려받는 데 시간이 걸려서** 느린 것이다. 그래서 네트워크가 제한된 모바일에서만 점수가 떨어진다.
+
+즉 **모바일 점수는 "느린 폰 + 느린 네트워크"를 가정한 점수**라서 낮게 나오는 것이 정상이며,
+개선할 부분을 찾을 때는 **모바일 보고서를 기준**으로 보는 것이 맞다.
 
 ### 3단계. 가장 성능을 감소시키는 항목 2개 찾기
 
-보고서 하단 **Opportunities / Diagnostics** 항목을 보면 이 템플릿에서 반복적으로 지적되는 항목은 다음 두 가지다.
+모바일 보고서의 Opportunities를 **절감 가능 시간 순**으로 정렬한 실제 결과다.
 
-#### ① 이미지 최적화 문제 — *Properly size images / Serve images in next-gen formats*
+| 순위 | 항목                               | 절감 가능 시간 | 절감 가능 용량 |
+| ---- | ---------------------------------- | -------------- | -------------- |
+| **1** | **Enable text compression**        | **1,840 ms**   | 301 KiB        |
+| **2** | **Eliminate render-blocking resources** | **1,651 ms** | -              |
+| 3    | Reduce unused CSS                  | 1,090 ms       | 166 KiB        |
+| 4    | Serve images in next-gen formats   | 1,050 ms       | 334 KiB        |
+| 5    | Properly size images               | 1,050 ms       | 247 KiB        |
+| 6    | Reduce unused JavaScript           | 600 ms         | 85 KiB         |
 
-이 템플릿은 화면에 보이는 크기보다 훨씬 큰 원본 이미지를, 압축률이 낮은 포맷(PNG/JPG)으로 그대로 내려준다.
+#### ① 텍스트 압축 미적용 — *Enable text compression* (1,840 ms)
 
-| 파일                                            | 용량 |
-| ----------------------------------------------- | ---- |
-| `images/worker.png`                             | 114K |
-| `images/couple-working-from-home-together-sofa.jpg` | 100K |
-| `images/portrait-happy-excited-man-holding-laptop-computer.png` | 48K |
-| **images 폴더 전체**                            | **872K** |
+CSS·JS 같은 텍스트 파일을 **압축하지 않고 원본 그대로** 내려주고 있다.
+gzip만 켜도 **301 KiB**를 줄일 수 있다 — 이 프로젝트에서 가장 큰 손해다.
 
-- 모바일은 네트워크가 제한되므로 이 용량이 곧바로 **LCP(가장 큰 콘텐츠 표시 시간)** 지연으로 이어진다
-- **해결 방법** : 실제 표시 크기에 맞게 리사이즈, **WebP** 같은 차세대 포맷으로 변환, 화면 아래 이미지는 `loading="lazy"` 적용
+| 파일                    | 원본 용량 |
+| ----------------------- | --------- |
+| `css/bootstrap.min.css` | 160K      |
+| `js/jquery.min.js`      | 84K       |
+| `js/bootstrap.min.js`   | 58K       |
 
-#### ② 렌더링 차단 리소스 — *Eliminate render-blocking resources / Reduce unused CSS·JavaScript*
+**해결 방법** — 스프링 부트는 설정 한 줄로 켤 수 있다.
 
-`<head>` 에서 CSS 4개 + Google Fonts를 모두 불러오고, 하단에서 jQuery 계열 스크립트를 로드한다.
-CSS는 **전부 받아서 해석할 때까지 화면을 그리지 못한다(=렌더링 차단)**.
+```properties
+# application.properties
+server.compression.enabled=true
+server.compression.mime-types=text/html,text/css,application/javascript
+server.compression.min-response-size=1024
+```
 
-| 파일                  | 용량 | 비고                                    |
-| --------------------- | ---- | --------------------------------------- |
-| `css/bootstrap.min.css` | 160K | 실제로는 일부 클래스만 사용 → unused CSS |
-| `js/jquery.min.js`      | 84K  | magnific-popup, sticky, click-scroll의 전제 |
-| `js/bootstrap.min.js`   | 58K  |                                          |
-| **css 폴더 전체**       | **352K** |                                     |
-| **js 폴더 전체**        | **232K** |                                     |
+> 코드를 한 줄도 안 고치고 설정만으로 개선되는 항목이라, 가장 먼저 적용할 부분이다.
 
-- **해결 방법** : 사용하지 않는 부트스트랩 CSS 제거, 폰트는 `display=swap` 사용, 스크립트에 `defer` 적용, jQuery 의존 플러그인을 순수 JS로 교체
+#### ② 렌더링 차단 리소스 — *Eliminate render-blocking resources* (1,651 ms)
+
+`<head>` 에서 **CSS 4개 + Google Fonts**를 전부 불러온다.
+브라우저는 이 파일들을 **다 받아서 해석할 때까지 화면을 그리지 못한다(= 렌더링 차단).**
+모바일 FCP가 2.6초까지 밀린 직접적인 원인이다.
+
+```html
+<link th:href="@{/css/bootstrap.min.css}" rel="stylesheet" />
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/..." rel="stylesheet" />
+<link th:href="@{/css/magnific-popup.css}" rel="stylesheet" />
+<link th:href="@{/css/templatemo-first-portfolio-style.css}" rel="stylesheet" />
+```
+
+여기에 **사용하지 않는 CSS가 166 KiB** (3위 항목)나 섞여 있다. 부트스트랩 전체를 넣고 일부 클래스만 쓰기 때문이다.
+
+**해결 방법** — 사용하는 부트스트랩 컴포넌트만 남기기, 첫 화면에 필요 없는 CSS는 나중에 불러오기,
+폰트는 `display=swap` 적용, 스크립트에는 `defer` 적용
+
+#### 참고 : 이미지 문제 (3~5위)
+
+예상과 달리 이미지는 1·2위가 아니었다. 이미 `img-fluid` 로 적절히 줄여 쓰고 있어서다.
+그래도 **WebP로 변환하면 334 KiB**, **실제 표시 크기로 리사이즈하면 247 KiB** 를 더 줄일 수 있고,
+**모바일 LCP 6.1초의 주인공이 Hero 이미지**이므로 개선 효과는 확실하다.
 
 ### 결론
 
-| 구분          | 원인                                  | 개선 방향                                  |
-| ------------- | ------------------------------------- | ------------------------------------------ |
-| 점수 차이     | 모바일은 CPU 4배 + 저속 4G로 제한 측정 | 모바일 보고서 기준으로 개선한다             |
-| 성능 저하 ①   | 최적화되지 않은 대용량 이미지 (872K)   | 리사이즈 + WebP 변환 + lazy loading         |
-| 성능 저하 ②   | 렌더링 차단 CSS/JS (CSS 352K, JS 232K) | 미사용 CSS 제거, `defer`, jQuery 의존 축소   |
+| 구분          | 측정값 / 원인                                       | 개선 방향                                     |
+| ------------- | --------------------------------------------------- | --------------------------------------------- |
+| 점수 차이     | Mobile 73 vs Desktop 95 (**-22**)                    | 모바일 기준으로 개선한다                       |
+| 차이의 이유   | 모바일은 CPU 4배 + 저속 4G로 제한 측정, TBT는 0ms     | 연산이 아니라 **다운로드 속도** 문제            |
+| 성능 저하 ①   | 텍스트 압축 미적용 — **1,840 ms / 301 KiB**          | `server.compression.enabled=true` 설정 추가    |
+| 성능 저하 ②   | 렌더링 차단 CSS 4개 — **1,651 ms**, 미사용 CSS 166 KiB | 미사용 CSS 제거, `defer`, 폰트 `display=swap` |
 
-이 과제로 확인한 것은 **성능은 "코드가 잘 동작하느냐"와 별개의 문제라는 점**, 그리고 **무거운 이미지와 렌더링 차단 리소스가 체감 속도를 좌우한다는 점**이다.
+이 과제로 확인한 것은 **성능은 "코드가 잘 동작하느냐"와 별개의 문제라는 점**,
+그리고 **체감 속도를 좌우하는 것은 무거운 연산이 아니라 다운로드해야 하는 파일의 크기와 순서라는 점**이다.
