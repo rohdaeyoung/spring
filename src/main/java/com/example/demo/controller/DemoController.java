@@ -1,11 +1,20 @@
-package com.example.demo;
+package com.example.demo.controller;
 
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 
+import java.util.List;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import com.example.demo.model.domain.TestDB; // 도메인 연동
+import com.example.demo.model.service.TestService; // 최상단 서비스 클래스 연동 추가
+
 @Controller // 컨트롤러 어노테이션 명시
 public class DemoController {
+
+    @Autowired
+    TestService testService; // DemoController 클래스 아래 객체 주입
 
     @GetMapping("/hello") // 전송 방식 GET
     public String hello(Model model) {
@@ -21,5 +30,16 @@ public class DemoController {
         model.addAttribute("weather", "날씨는.");      // 속성 4
         model.addAttribute("comment", "매우 좋습니다."); // 속성 5
         return "hello2"; // hello2.html 연결
+    }
+
+    @GetMapping("/testdb") // 4주차 : 데이터베이스 테스트 페이지
+    public String getAllTestDBs(Model model) {
+        // TestDB test = testService.findByName("홍길동"); // 1명만 조회하던 기존 코드
+        // model.addAttribute("data4", test);
+
+        List<TestDB> users = testService.findAll(); // 다수 사용자 조회
+        model.addAttribute("users", users);
+        System.out.println("데이터 출력 디버그 : " + users);
+        return "testdb"; // testdb.html 연결
     }
 }
