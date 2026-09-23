@@ -1113,7 +1113,8 @@ flush privileges;
 ```properties
 spring.datasource.url=jdbc:mysql://localhost:3306/spring?serverTimezone=Asia/Seoul
 spring.datasource.username=root
-spring.datasource.password=${MYSQL_PASSWORD}
+spring.config.import=optional:file:./local.properties
+spring.datasource.password=
 spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver
 spring.jpa.hibernate.ddl-auto=update
 spring.jpa.show-sql=true
@@ -1125,8 +1126,17 @@ spring.jpa.show-sql=true
 | `ddl-auto=update` | **엔티티 클래스를 읽어 테이블을 자동 생성/수정** |
 | `show-sql=true` | JPA가 만든 SQL을 터미널에 출력 |
 
-> 이 저장소는 공개 저장소이므로 **비밀번호를 파일에 직접 적지 않고** 환경변수 `MYSQL_PASSWORD` 로 분리했다.
-> 실제 값은 깃에 올라가지 않는 `.vscode/launch.json` 에 넣어 두었다. (PDF 원본은 비밀번호를 그대로 적는다)
+> **비밀번호 분리** : 이 저장소는 공개 저장소이므로 비밀번호를 `application.properties` 에 직접 적지 않았다.
+> `spring.config.import` 으로 **프로젝트 최상단의 `local.properties`** 를 불러오고, 그 파일은 `.gitignore` 에 등록해 깃에 올리지 않는다.
+> (PDF 원본은 비밀번호를 그대로 적는다)
+>
+> 그래서 이 저장소를 내려받아 실행하려면 최상단에 `local.properties` 파일을 만들고 아래 한 줄을 넣으면 된다.
+>
+> ```properties
+> spring.datasource.password=본인_MySQL_비밀번호
+> ```
+>
+> `optional:` 을 붙였기 때문에 파일이 없어도 서버는 뜬다 (DB 접속만 실패).
 
 ### ④ 정상 접속 확인
 

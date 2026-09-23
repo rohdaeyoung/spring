@@ -34,3 +34,6 @@ build/
 
 ### VS Code Java ###
 /bin/
+
+### 로컬 비밀번호 설정 ###
+local.properties
