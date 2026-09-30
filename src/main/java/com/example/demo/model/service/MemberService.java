@@ -1,6 +1,7 @@
 package com.example.demo.model.service;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.userdetails.*; // User, UserDetails 등
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import com.example.demo.model.domain.Member;
@@ -8,7 +9,7 @@ import com.example.demo.model.dto.MemberForm;
 import com.example.demo.model.repository.MemberRepository;
 
 @Service // 서비스 등록
-public class MemberService {
+public class MemberService implements UserDetailsService { // 로그인을 위한 인터페이스 제공
     @Autowired
     private MemberRepository memberRepository;
 
@@ -16,6 +17,10 @@ public class MemberService {
     private PasswordEncoder passwordEncoder;
 
     public Member signup(MemberForm form) { // 회원가입
+        // 5주차 연습문제 ② : 비밀번호 확인 검증 (DB 저장 전에 막는다)
+        if (form.getPassword() == null || !form.getPassword().equals(form.getPasswordConfirm())) {
+            throw new IllegalArgumentException("비밀번호가 일치하지 않습니다.");
+        }
         if (memberRepository.existsByUsername(form.getUsername())) {
             throw new IllegalArgumentException("이미 사용 중인 아이디입니다.");
         }
@@ -25,5 +30,18 @@ public class MemberService {
         member.setName(form.getName());
         member.setRole("USER"); // 기본 권한
         return memberRepository.save(member); // INSERT
+    }
+
+    @Override // 로그인 시 시큐리티가 자동 호출
+    public UserDetails loadUserByUsername(String username)
+            throws UsernameNotFoundException {
+        Member member = memberRepository.findByUsername(username)
+                .orElseThrow(() -> new UsernameNotFoundException("회원 없음 : " + username));
+
+        return User.builder() // 시큐리티용 사용자 객체로 변환
+                .username(member.getUsername())
+                .password(member.getPassword()) // 암호화 값 → matches()로 비교
+                .roles(member.getRole())        // USER → ROLE_USER
+                .build();
     }
 }

@@ -1548,3 +1548,700 @@ SELECT 한 결과
 
 이 과제로 확인한 것은 **엔티티 클래스만 고치면 테이블 구조가 따라 바뀐다는 점**(`ddl-auto=update`),
 그리고 **데이터를 추가·출력하려면 도메인 → DB → 뷰 세 곳이 맞물려야 한다는 점**이다.
+
+---
+
+# 5주차 수업 내용
+
+5주차는 **로그인/로그아웃을 구현하고, 비밀번호를 BCrypt로 암호화해서 저장**하는 것이 목표다.
+4주차까지는 DB에서 값을 읽어오기만 했다면, 이번 주부터는 **누가 접속했는지 확인하고 페이지를 잠근다.**
+
+## 1. 웹 보안 — 왜 로그인인가
+
+**해킹의 시작은 대부분 "로그인"이다.** OWASP Top 10 (2025) 중 오늘 다루는 항목은 2개다.
+
+| 순위 | 항목 | 내용 |
+| ---- | ---- | ---- |
+| **A01** | 접근 제어 실패 (Broken Access Control) | 로그인 없이 회원·관리자 페이지 접근, URL을 통한 중요 정보 조회 |
+| **A07** | 인증 실패 (Authentication Failures) | 인증 기능 자체의 결함 |
+
+### 인증(Authentication) vs 인가(Authorization)
+
+| 구분 | 질문 | 비유 | 내용 |
+| ---- | ---- | ---- | ---- |
+| **인증** (5주차) | **"너 누구야?"** | 공항 : 신분증 확인 | 로그인 (아이디 + 비밀번호) |
+| 인가 (6주차) | "너 이거 해도 돼?" | 공항 : 탑승권·좌석 등급 | 권한 (USER / ADMIN) |
+
+> **인증을 통과해야 인가를 검사할 수 있다.** (인증 → 인가 순서)
+
+## 2. 비밀번호 저장 — 암호화 vs 해시
+
+### 평문 저장은 왜 안 되나
+
+개인정보의 안전성 확보조치 기준에 따라 **비밀번호는 일방향 암호화(해시)하여 저장**해야 한다.
+
+| ✗ 평문 저장 | | ✓ BCrypt 해시 저장 | |
+| --- | --- | --- | --- |
+| username | password | username | password |
+| student1 | 1234 | student1 | `$2a$10$NVoiGbQT...` |
+| student2 | 1234 | student2 | `$2a$10$EBmnieSd...` |
+
+같은 비밀번호 `1234`라도 **평문은 그대로 노출되지만, BCrypt는 매번 다른 값**이 된다.
+
+### 암호화와 해시는 다르다
+
+- **암호화** : 복호화 가능 → **키가 털리면 끝**
+- **해시** : 되돌릴 수 없음 → 비밀번호 저장용
+
+| 항목 | BCrypt | SHA-256 |
+| ---- | ------ | ------- |
+| 종류 | 단방향 해시 (암호학적 해시 함수) | 단방향 해시 (암호학적 해시 함수) |
+| Salt 적용 | **자동 적용** (매번 무작위 Salt 생성) | 기본적으로 없음 (따로 붙여야 함) |
+| 느린가 빠른가 | **일부러 느리게 설계됨** (brute-force 방어) | 엄청 빠름 (파일 무결성 검증용) |
+| 사용 목적 | 주로 비밀번호 저장용 | 데이터 무결성 검사, 디지털 서명 |
+| 출력 길이 | 60자 문자열 (보통 `$2a$` 로 시작) | 256비트 (64글자 헥사) |
+
+### BCrypt 해시 구조 (60자)
+
+```
+$2a$ 10$ NVoiGbQTms7n8bJ2PZszWu Ug7c333QXBefQL7fyD4Eos1BooOBS4m
+ │    │            │                          │
+알고리즘 cost      솔트 22자                  해시 31자
+버전 2a  2^10 반복  매번 랜덤 → 같은 비번도    되돌릴 수 없음
+                   다른 결과                  → matches() 로만 비교
+```
+
+> **해시도 안전하지 않다?** MD5, SHA-1은 대입 공격에 취약하다.
+> 그래서 **BCrypt, Argon2** 같은 "느린 해시 + 솔트"를 쓴다.
+
+## 3. 로그인 방식의 변화
+
+| 방식 | 시기 | 내용 |
+| ---- | ---- | ---- |
+| **세션(Session)** | **오늘 실습** | 서버가 로그인 저장, 브라우저는 **JSESSIONID** 쿠키. 전통적인 웹 사이트(Thymeleaf, JSP) |
+| 토큰(JWT) | 7주차~ | 서버 저장 X, 앱 · REST API |
+| 소셜 로그인(OAuth2) | - | 카카오 · 네이버 · 구글 로그인 |
+| 패스키(Passkey) | 확산 중 | 지문 · 얼굴 인증, 비밀번호 없음 |
+
+세션 방식의 동작
+
+```
+1. 요청           →  서버
+2.                   세션ID 발급
+3. 응답 🍪        ←  cookie에 세션ID 저장 (JSESSIONID)
+4. 요청 🍪        →  세션ID가 담겨있는 cookie
+5.                   세션ID 확인, 해당 세션에 관련된 정보 확인
+```
+
+**Spring Security** 는 스프링 공식 보안 프레임워크이며, 부트 4.x 에서는 시큐리티 7.1.x 를 사용한다.
+
+## 4. 의존성 모듈 추가
+
+`pom.xml` 에 2개를 추가하고 **새로고침(Reload)** 한다.
+
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-security</artifactId>
+</dependency>
+<dependency>
+    <groupId>org.thymeleaf.extras</groupId>
+    <artifactId>thymeleaf-extras-springsecurity6</artifactId>
+</dependency>
+```
+
+> ⚠️ pom.xml을 저장해도 VS Code는 자동으로 다시 읽지 않는다.
+> `pom.xml` 우클릭 → **Reload Projects** 를 해야 클래스패스에 반영된다.
+
+### 보안 모듈 추가 후 서버를 재시작하면
+
+- **메인·CSS 포함 모든 페이지가 잠긴다** → 시큐리티는 **기본이 전부 잠금**
+- 터미널에 `generated security password` 가 출력된다
+- 아이디 `user` + 그 비밀번호로 로그인 가능
+
+```
+Using generated security password: 4d26a72d-e0e2-4552-a78c-eea66bb265f0
+```
+
+### 필터(Filter) 기반 보안
+
+요청이 **컨트롤러에 도착하기 전에** 검사한다. 여러 보안 필터가 체인(사슬)처럼 연결되어 있다.
+
+```
+브라우저 HTTP 요청
+   ↓
+┌─ SecurityFilterChain ───────────────────────────────────────────┐
+│ CsrfFilter → UsernamePassword        → LogoutFilter → Authorization│
+│ CSRF 토큰     AuthenticationFilter     POST /logout    Filter      │
+│ 검사          POST /login 처리         처리            URL 권한 검사 │
+└─────────────────────────────────────────────────────────────────┘
+   ↓ 통과                              ✗ 실패 → 302 로그인 화면 / 403 거부
+DispatcherServlet → @Controller (통과한 요청만)
+```
+
+> **CSRF** : 다른 사이트가 내 쿠키로 몰래 POST 할 수 있는 공격.
+> 그래서 폼에 `th:action` 을 쓰면 **hidden `_csrf` 토큰이 자동 삽입**된다.
+
+## 5. 구조 변경 — 오늘 작성할 파일 6개
+
+```
+com/example/demo/
+├── config/
+│   └── SecurityConfig.java      ← 보안 설정 (새 폴더)
+├── controller/
+│   ├── DemoController.java
+│   └── MemberController.java    ← 로그인·가입 요청
+├── model/
+│   ├── domain/
+│   │   ├── Member.java          ← 엔티티
+│   │   └── TestDB.java
+│   ├── dto/
+│   │   └── MemberForm.java      ← DTO (새 폴더)
+│   ├── repository/
+│   │   ├── MemberRepository.java ← DB 접근
+│   │   └── TestRepository.java
+│   └── service/
+│       ├── MemberService.java   ← 가입(암호화) · 로그인 조회
+│       └── TestService.java
+└── DemoApplication.java
+```
+
+### 로그인 전체 흐름 (핵심)
+
+```
+① 브라우저          POST /login (username, password)          ← login.html
+       ↓
+② Security Filter   UsernamePasswordAuthenticationFilter      ← 시큐리티 제공
+       ↓
+③ Provider          AuthenticationManager / DaoAuthenticationProvider  ← 시큐리티 제공
+       ↓
+④ Service           loadUserByUsername()                      ← MemberService.java (우리가 구현)
+       ↓
+⑤ Repository        findByUsername()                          ← MemberRepository.java
+       ↓
+⑥ MySQL             member 테이블 $2a$10$...
+       ↓
+⑦ PasswordEncoder.matches(입력 비번, DB 해시)
+       ↓
+   성공 → 세션 저장 + JSESSIONID → /        실패 → /login?error
+```
+
+## 6. 보안 설정 — SecurityConfig
+
+`config` 폴더에 `SecurityConfig.java` 를 생성한다.
+
+```java
+@Configuration // 스프링 설정 클래스 등록
+@EnableWebSecurity // 스프링 시큐리티 활성화
+public class SecurityConfig {
+
+    @Bean // 비밀번호 암호화 객체 등록 (BCrypt 해시)
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    @Bean // 보안 필터 체인 등록
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        http
+            .authorizeHttpRequests(auth -> auth // 1. URL 접근 규칙 (인가)
+                .requestMatchers("/", "/hello", "/detailed_web.html",
+                                 "/login", "/signup", "/error").permitAll()
+                .requestMatchers("/css/**", "/js/**", "/images/**", "/fonts/**").permitAll()
+                .anyRequest().authenticated())
+            .formLogin(form -> form // 2. 폼 로그인 설정 (인증)
+                .loginPage("/login")
+                .defaultSuccessUrl("/")
+                .failureUrl("/login?error")
+                .permitAll());
+        return http.build();
+    }
+}
+```
+
+### 설정별 의미
+
+| 설정 | 의미 |
+| ---- | ---- |
+| `permitAll()` | 누구나 접근 (메인, 상세, 로그인, 가입) |
+| `/css/**` 등 | 정적 리소스 허용 (**빠지면 디자인 깨짐**) |
+| `anyRequest().authenticated()` | 나머지 전부 로그인 필요 → `/testdb` |
+| `loginPage("/login")` | 기본 화면 대신 우리 로그인 화면 |
+| `defaultSuccessUrl("/")` | 성공 시 메인 (원래 가려던 곳 우선) |
+| `failureUrl("/login?error")` | 실패 시 에러 파라미터 |
+
+### 위에서부터 순서대로 검사한다
+
+```
+GET /                      → permitAll()       → 200 메인 화면
+GET /css/bootstrap.min.css → permitAll()       → 200 디자인 적용
+GET /detailed_web.html     → permitAll()       → 200 상세 페이지
+GET /login , /signup       → permitAll()       → 200 로그인·가입
+GET /testdb (비로그인)      → authenticated()   → 302 → /login
+GET /testdb (로그인)        → authenticated()   → 200 회원 목록
+```
+
+> `anyRequest()` 는 **항상 마지막**에 와야 한다. 처음 일치한 규칙이 적용되기 때문이다.
+
+### 람다 DSL 문법
+
+| 구분 | 내용 |
+| ---- | ---- |
+| 매개변수 자동 주입 | `@Bean` 메서드의 매개변수(예: `HttpSecurity http`)는 스프링이 자동으로 삽입 |
+| 람다 DSL 사용 | `.and()` 로 이어 쓰는 방식은 6.x에서 사용 중단, **7.x에서 제거** → 람다 방식으로 작성 |
+
+## 7. 요청 페이지 — MemberController
+
+`controller` 폴더에 `MemberController.java` 를 생성한다.
+
+```java
+@Controller // 컨트롤러 어노테이션 명시
+public class MemberController {
+
+    @GetMapping("/login") // 로그인 화면 (POST /login 은 시큐리티가 처리)
+    public String login() {
+        return "login"; // login.html 연결
+    }
+
+    @GetMapping("/signup") // 회원가입 화면
+    public String signupForm() {
+        return "signup"; // signup.html 연결
+    }
+}
+```
+
+> **중요** : `loginPage("/login")` 을 지정하는 순간 시큐리티의 기본 로그인 화면은 사라진다.
+> 그래서 GET `/login` 을 처리할 컨트롤러가 **반드시 있어야 한다.** 없으면 404가 난다.
+
+**실행 결과 — 메인 우측 상단 (로그인 전)**
+
+![로그인 전 네비게이션](docs/images/week5-nav-before.png)
+
+**실행 결과 — http://localhost:8080/login**
+
+![로그인 화면](docs/images/week5-login.png)
+
+## 8. 회원 엔티티 — Member
+
+`domain` 폴더에 `Member.java` 를 생성한다. 다수 테이블이 생성될 수 있기 때문에 파일로 분리한다.
+
+```java
+@Entity // Member 객체와 DB 테이블을 매핑. JPA가 관리
+@Table(name = "member") // 테이블 이름은 member
+@Data // set/get/tostring 등 필수 메서드 자동 생성
+public class Member {
+    @Id // 해당 변수가 PK
+    @GeneratedValue(strategy = GenerationType.IDENTITY) // 자동 증가
+    private Long id;
+
+    @Column(nullable = false, unique = true, length = 50) // 아이디 : 중복 불가
+    private String username;
+
+    @Column(nullable = false) // 비밀번호 : BCrypt 암호화 값(60자)
+    private String password;
+
+    @Column(nullable = false, length = 50) // 이름
+    private String name;
+
+    @Column(nullable = false, length = 20) // 권한 : USER (6주차 ADMIN)
+    private String role;
+}
+```
+
+### 4주차 TestDB 와 비교
+
+| 4주차 TestDB | 5주차 Member |
+| ------------ | ------------ |
+| id (직접 입력) | **id 자동 증가** |
+| nullable = true | **nullable = false** |
+| - | **unique = true (아이디)** |
+| - | role (권한, 6주차) |
+
+> `username` 은 **로그인 아이디**다. 중복되면 누구인지 알 수 없으므로 `unique = true` 가 필수다.
+
+## 9. 회원 리포지토리 — MemberRepository
+
+```java
+@Repository // 리포지토리 등록
+public interface MemberRepository extends JpaRepository<Member, Long> {
+    // SELECT * FROM member WHERE username = ?
+    Optional<Member> findByUsername(String username);
+
+    // 아이디 중복 확인 (존재하면 true)
+    boolean existsByUsername(String username);
+}
+```
+
+| 메서드 이름 | 자동 생성 SQL |
+| ----------- | ------------- |
+| `findByUsername(u)` | `WHERE username = ?` |
+| `existsByUsername(u)` | 존재 여부 true/false |
+
+> **메서드 이름 규칙만 지키면 JPA가 SQL을 대신 만든다.**
+> `Optional` 은 회원이 없을 수도 있으므로 null 대신 안전하게 쓰기 위함이다 (자바 8, NPE 방지).
+
+## 10. 가입 데이터 — DTO (MemberForm)
+
+`model` 아래 `dto` 폴더를 생성하고 `MemberForm.java` 를 만든다.
+
+```java
+@Data // set/get/tostring 등 필수 메서드 자동 생성
+public class MemberForm { // 회원가입 화면 → 컨트롤러로 전달되는 데이터
+    private String username;        // input name="username"
+    private String password;        // input name="password"
+    private String passwordConfirm; // input name="passwordConfirm"
+    private String name;            // input name="name"
+}
+```
+
+### 왜 엔티티(Member)를 바로 안 쓰나?
+
+- 화면 데이터와 DB 필드가 다른 경우가 있다
+- **보안 : 권한 조작 방지** — `role=ADMIN` 을 몰래 전송해도 **필드가 없으면 무시**된다
+
+| 필드 | 가입 화면(폼) | DB(Member) |
+| ---- | ------------- | ---------- |
+| username, password, name | 있음 | 있음 |
+| passwordConfirm | 있음 | **없음** (확인용일 뿐 저장 안 함) |
+| role | **없음** | 있음 (서버가 USER로 지정) |
+
+> **폼의 `name` 속성 = DTO 필드 이름** 이면 자동으로 저장된다(바인딩).
+
+## 11. 회원가입 서비스 — MemberService
+
+```java
+@Service // 서비스 등록
+public class MemberService {
+    @Autowired
+    private MemberRepository memberRepository;
+
+    @Autowired // SecurityConfig 에 등록한 BCryptPasswordEncoder 주입
+    private PasswordEncoder passwordEncoder;
+
+    public Member signup(MemberForm form) { // 회원가입
+        if (memberRepository.existsByUsername(form.getUsername())) { // ① 중복 확인
+            throw new IllegalArgumentException("이미 사용 중인 아이디입니다.");
+        }
+        Member member = new Member();
+        member.setUsername(form.getUsername());
+        member.setPassword(passwordEncoder.encode(form.getPassword())); // ② ★ 암호화
+        member.setName(form.getName());
+        member.setRole("USER"); // ③ 기본 권한
+        return memberRepository.save(member); // INSERT
+    }
+}
+```
+
+| 단계 | 내용 |
+| ---- | ---- |
+| ① 중복 확인 | `existsByUsername` → 예외 발생 |
+| ② **★ 암호화** | `passwordEncoder.encode()` : `1234` → `$2a$10$...` |
+| ③ 저장 | `role = USER` 기본 권한, `save()` → INSERT |
+
+> `@Autowired` 는 **바로 아래 한 개의 필드에만** 적용된다. 없으면 NPE 발생.
+
+## 12. 회원가입 컨트롤러
+
+기존 `MemberController.java` 에 추가한다.
+
+```java
+@Autowired
+MemberService memberService; // 클래스 상단에 객체 주입
+
+@PostMapping("/signup") // 회원가입 처리
+public String signup(MemberForm memberForm, Model model) {
+    try {
+        memberService.signup(memberForm);
+    } catch (IllegalArgumentException e) { // 중복 아이디 등
+        model.addAttribute("error", e.getMessage()); // ${error}
+        return "signup"; // 입력값 유지한 채 다시 가입 화면
+    }
+    return "redirect:/login?signup"; // 성공 → 로그인 화면
+}
+```
+
+**실행 결과 — http://localhost:8080/signup**
+
+![회원가입 화면](docs/images/week5-signup.png)
+
+### 가입 테스트 : `student1 / 123123`, `student2 / 123123`
+
+**같은 비밀번호로 두 명을 가입**시킨 결과다.
+
+![member 테이블 조회 결과](docs/images/week5-member-table.png)
+
+```
+id | name   | password                                                     | role | username
+ 1 | 홍길동 | $2a$10$AvKrnMZmJuKdr1SwMCeHqeruhglbbbE6/zgg1YbLjGuQKuNFFQHZm | USER | student1
+ 2 | kim    | $2a$10$ZQDlFetAQtMOBb6RCOVueOW3OSrctTpe/inLoRu93sXRkYxhiWrje | USER | student2
+```
+
+> 비밀번호가 **둘 다 `123123` 인데 해시가 완전히 다르다.**
+> BCrypt가 매번 다른 **랜덤 솔트**를 붙여 계산하기 때문이다. 평문 저장이었다면 둘 다 똑같이 보였을 것이다.
+
+## 13. 로그인 연결 — UserDetailsService
+
+기존 `MemberService.java` 에 **`implements UserDetailsService`** 를 추가한다.
+시큐리티에 **회원 조회 방법**을 제공하는 부분이다.
+
+```java
+@Service
+public class MemberService implements UserDetailsService { // 로그인을 위한 인터페이스 제공
+    // ... 기존 코드 유지 ...
+
+    @Override // 로그인 시 시큐리티가 자동 호출
+    public UserDetails loadUserByUsername(String username)
+            throws UsernameNotFoundException {
+        Member member = memberRepository.findByUsername(username)
+                .orElseThrow(() -> new UsernameNotFoundException("회원 없음 : " + username));
+
+        return User.builder() // 시큐리티용 사용자 객체로 변환
+                .username(member.getUsername())
+                .password(member.getPassword()) // 암호화 값 → matches()로 비교
+                .roles(member.getRole())        // USER → ROLE_USER
+                .build();
+    }
+}
+```
+
+- **비밀번호 비교 코드는 직접 작성하지 않는다** → 시큐리티가 자동 비교
+- 없는 아이디 → `UsernameNotFoundException` → `/login?error`
+
+### matches() 한 번에 일어나는 일
+
+우리는 **사용자 조회만** 구현하고, 비교·실패 처리·세션 저장은 시큐리티가 담당한다.
+
+| 구분 | 문제 상황 | 시큐리티의 처리 |
+| ---- | --------- | --------------- |
+| **타이밍 공격 방지** | `equals()`는 다른 글자를 만나면 바로 멈춤 → 앞부분이 많이 맞을수록 응답이 늦어져 값을 한 글자씩 추측 가능 | `matches()` 가 항상 끝까지 비교하는 **고정 시간 비교** 사용 |
+| **계정 존재 여부 숨김** | 아이디 없음은 빠르고, 있음은 BCrypt 연산으로 느림 → 시간 차이로 가입 아이디 파악 가능 | 아이디가 없어도 **가짜 BCrypt 연산을 수행해 응답 시간 통일**, 오류 메시지도 통일 |
+| **역할 분리** | 로그인 기능마다 직접 구현하면 보안 수준이 제각각 | 개발자는 사용자 조회(`UserDetailsService`)만 구현 |
+
+## 14. 로그인 테스트
+
+서버를 재시작하면 터미널에서 **`generated security password` 가 사라진다.** 우리 회원 DB를 쓴다는 뜻이다.
+
+| 시나리오 | 결과 |
+| -------- | ---- |
+| 틀린 비밀번호 | `302 → /login?error` (오류 메시지) |
+| 정상 로그인 (`student1 / 123123`) | `302 → /` |
+| 로그인 후 메인 | **student1님 + 로그아웃** 표시 |
+| 로그인 후 `/testdb` | `200` 회원 목록 |
+
+**실행 결과 — 로그인 후 메인 화면**
+
+![로그인 후 네비게이션](docs/images/week5-nav-after.png)
+
+### 오늘의 문법 — `sec:` (Thymeleaf Security)
+
+최상단 선언이 있어야 동작한다. **`xmlns:sec` 이 없으면 `sec:` 속성은 그냥 무시된다**(에러도 안 남).
+
+```html
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+```
+
+```html
+<a sec:authorize="isAnonymous()" th:href="@{/login}">로그인</a>
+<div sec:authorize="isAuthenticated()">
+    <span sec:authentication="name"></span>님
+</div>
+```
+
+| 구분 | `sec:authorize` | `sec:authentication` |
+| ---- | --------------- | -------------------- |
+| 역할 | 조건에 따라 태그 출력/삭제 | 로그인 사용자 정보 출력 |
+| 예시 | `isAuthenticated()`, `isAnonymous()`, `hasRole('ADMIN')`(6주차) | `name` → 로그인 아이디 |
+| 값의 출처 | 시큐리티의 인증 상태 | `loadUserByUsername()` 의 UserDetails |
+
+- 비로그인 : 로그인 버튼만 보임
+- 로그인 : 아이디님 + 로그아웃
+
+## 15. 로그아웃 설정
+
+기존 `SecurityConfig.java` 의 `.formLogin(...)` 뒤에 이어서 추가한다.
+(주의 : `.permitAll());` 의 마지막 `;` 를 지우고 이어서 작성)
+
+```java
+.logout(logout -> logout // 3. 로그아웃 설정
+    .logoutUrl("/logout") // 로그아웃 처리 URL (POST)
+    .logoutSuccessUrl("/login?logout") // 로그아웃 후 이동
+    .invalidateHttpSession(true) // 세션 삭제
+    .deleteCookies("JSESSIONID", "remember-me")); // 쿠키 삭제
+```
+
+**실행 결과 — 로그아웃 후**
+
+![로그아웃 완료](docs/images/week5-logout.png)
+
+| 확인 항목 | 결과 |
+| --------- | ---- |
+| 메인에서 로그아웃 클릭 | `302 → /login?logout` "로그아웃 되었습니다." |
+| 다시 회원목록 클릭 | `302 → /login` (세션 삭제 확인) |
+| F12 → Application → Cookies | JSESSIONID 값 변경 확인 |
+
+> **주소창에 `/logout` 직접 입력(GET)은 동작하지 않는다.**
+> CSRF 보호 때문에 로그아웃은 **POST 폼만** 가능하다.
+
+## 16. 전체 테스트 & 오류 해결
+
+처음부터 다시 : **가입 → 로그인 → 회원목록 → 로그아웃 → 차단 확인**
+
+| 증상 | 원인 → 해결 |
+| ---- | ----------- |
+| 메인 디자인 깨짐 | `/css/**` 등 `permitAll` 누락 |
+| 로그인 화면 무한 이동 | `/login` `permitAll` 누락 |
+| 가입/로그인 시 403 | `action=` 사용 → **`th:action`** 사용 (CSRF 토큰) |
+| 로그인이 계속 실패 | `loadUserByUsername` 미구현, `implements` 누락 |
+| `There is no PasswordEncoder mapped for the id "null"` | DB에 평문 비밀번호 → 가입 기능으로 다시 생성 |
+| 로그인·로그아웃 버튼 둘 다 보임 | extras 의존성 누락 → `pom.xml` 확인 |
+
+> 참고 : `@Autowired` 필드 주입 경고 → 실무는 **생성자 주입** 권장 (추후 변경)
+
+## 17. GIT 업로드 시 주의 — DB 비밀번호 노출
+
+**그냥 업로드하면 `application.properties` 의 DB 비밀번호가 그대로 노출된다.**
+
+이 저장소는 4주차부터 아래 방식으로 분리해 두었다.
+
+```properties
+# application.properties (깃에 올라감)
+spring.config.import=optional:file:./local.properties
+spring.datasource.password=
+```
+
+```properties
+# local.properties (.gitignore 등록 → 깃에 안 올라감)
+spring.datasource.password=본인_MySQL_비밀번호
+```
+
+> PDF는 `application-secret.properties` 를 쓰지만 원리는 같다 —
+> **비밀번호를 별도 파일로 빼고, 그 파일을 `.gitignore` 에 등록**하는 것.
+
+## 수업에서 확인한 것 정리
+
+| 항목 | 핵심 |
+| ---- | ---- |
+| 인증 vs 인가 | 인증 "너 누구야?"(5주차) → 인가 "너 이거 해도 돼?"(6주차) |
+| BCrypt | 단방향 해시 + **자동 랜덤 솔트** → 같은 비번도 매번 다른 값 |
+| 시큐리티 기본값 | **전부 잠금** → `permitAll()` 로 열어줘야 함 |
+| 필터 기반 | 컨트롤러 도착 **전에** 검사 |
+| `anyRequest()` | 항상 마지막 (위에서부터 순서대로 검사) |
+| DTO를 쓰는 이유 | 화면 ↔ DB 분리, **권한 조작 방지** |
+| 우리가 구현할 것 | `loadUserByUsername()` **사용자 조회만** |
+| 비밀번호 비교 | 직접 구현 X → `matches()` 가 고정 시간 비교 |
+| `xmlns:sec` | 선언 없으면 `sec:` 속성이 **조용히 무시됨** |
+| 로그아웃 | **POST만** 가능 (CSRF 보호) |
+
+---
+
+# 5주차 과제
+
+## 문제 — 로그인 기능 개선하기
+
+### ① 로그인 상태 유지 (remember-me)
+
+- `login.html` 체크박스는 이미 제공됨
+- `SecurityConfig` 로그아웃 설정 뒤에 **`.rememberMe()` 추가**
+  - 힌트 : `key("비밀키")`, `tokenValiditySeconds(7일)`
+- 확인 : **브라우저 종료 후 재접속 → 로그인 유지**
+
+### ② 비밀번호 확인 검증
+
+- `signup()` 에서 **password ↔ passwordConfirm 비교**
+- 다르면 **"비밀번호가 일치하지 않습니다."** 출력
+- **DB 에 저장되지 않아야 함**
+
+## 풀이 순서
+
+### 1단계. remember-me 추가 — SecurityConfig
+
+`.logout(...)` 뒤에 이어서 작성한다.
+
+```java
+.rememberMe(remember -> remember // 5주차 연습문제 ① : 로그인 상태 유지
+    .key("first-portfolio-remember-me-key") // 쿠키 서명용 비밀키
+    .tokenValiditySeconds(60 * 60 * 24 * 7)); // 7일 유지
+```
+
+| 설정 | 의미 |
+| ---- | ---- |
+| `key(...)` | 쿠키 위조를 막기 위한 **서명용 비밀키**. 서버만 아는 값이라 이 값이 바뀌면 기존 쿠키는 전부 무효가 된다 |
+| `tokenValiditySeconds(604800)` | 쿠키 유효기간 = 7일 (60초 × 60분 × 24시간 × 7일) |
+
+동작 방식
+
+```
+☑ 상태 유지        🍪 쿠키              브라우저 종료        재접속
+체크 후 로그인  →  remember-me 7일  →  JSESSIONID 삭제  →  자동 로그인 ✓
+```
+
+**세션과 remember-me 쿠키는 별개다.** 브라우저를 닫으면 JSESSIONID는 사라지지만,
+remember-me 쿠키는 7일간 남아 있어서 다시 접속할 때 시큐리티가 그 쿠키로 **세션을 새로 만들어 준다.**
+
+**검증 결과** — 로그인 시 발급된 쿠키
+
+```
+Set-Cookie: JSESSIONID=DF3F74B85F0A1FB2631125B6FE64D46C; Path=/; HttpOnly
+Set-Cookie: remember-me=c3R1ZGVudDE6MTc5MTM0ODA3Nzc4MDpTSEEyNTY6MGRiOWJjOGUwMzkw...;
+            Expires=Wed, 07 Oct 2026 04:41:17 GMT; Max-Age=604800; Path=/; HttpOnly
+```
+
+**세션 쿠키(JSESSIONID)를 버리고 remember-me 쿠키만으로 `/testdb` 에 접속 → `200`**
+= 브라우저를 껐다 켠 것과 같은 상황에서 로그인이 유지됨을 확인했다.
+
+> `Max-Age=604800` 이 정확히 7일이다.
+> 쿠키 값은 `아이디:만료시각:SHA256:서명` 을 Base64로 인코딩한 것이라, 비밀번호는 들어있지 않다.
+
+### 2단계. 비밀번호 확인 검증 — MemberService
+
+`signup()` 의 **가장 앞**에 넣는다. 중복 확인보다 먼저 막아야 DB 조회조차 하지 않는다.
+
+```java
+public Member signup(MemberForm form) {
+    // 5주차 연습문제 ② : 비밀번호 확인 검증 (DB 저장 전에 막는다)
+    if (form.getPassword() == null || !form.getPassword().equals(form.getPasswordConfirm())) {
+        throw new IllegalArgumentException("비밀번호가 일치하지 않습니다.");
+    }
+    if (memberRepository.existsByUsername(form.getUsername())) {
+        throw new IllegalArgumentException("이미 사용 중인 아이디입니다.");
+    }
+    // ... 이하 기존 코드 ...
+}
+```
+
+- `IllegalArgumentException` 을 던지면 **이미 만들어 둔 컨트롤러의 `catch` 가 그대로 받는다.**
+  따로 컨트롤러를 고칠 필요가 없다 — `model.addAttribute("error", ...)` → `return "signup"`
+- `throw` 되는 순간 메서드가 끝나므로 **`save()` 까지 가지 않는다** → DB에 저장 안 됨
+
+**실행 결과 — `student3` / 비밀번호 `123123` / 확인 `999999`**
+
+![비밀번호 불일치 오류](docs/images/week5-signup-error.png)
+
+```
+화면      : "비밀번호가 일치하지 않습니다." (아이디·이름은 유지, 비밀번호만 비워짐)
+HTTP      : 200 (리다이렉트 없이 가입 화면 유지)
+DB 확인   : select count(*) from member where username='student3';  →  0
+```
+
+## 결과 정리
+
+| 구분 | 수정한 파일 | 핵심 |
+| ---- | ----------- | ---- |
+| ① 로그인 상태 유지 | `config/SecurityConfig.java` | `.rememberMe()` — key + 7일 |
+| ② 비밀번호 확인 | `model/service/MemberService.java` | `equals()` 비교 후 예외 |
+
+### 전체 동작 확인 (26p 시나리오)
+
+| 단계 | 요청 | 결과 |
+| ---- | ---- | ---- |
+| 1 | 가입 `student1 / 123123` | `302 → /login?signup` |
+| 2 | 틀린 비밀번호로 로그인 | `302 → /login?error` |
+| 3 | 정상 로그인 | `302 → /` + **student1님** 표시 |
+| 4 | 회원목록 `/testdb` | `200` |
+| 5 | 로그아웃 (POST) | `302 → /login?logout` |
+| 6 | 로그아웃 후 `/testdb` | `302 → /login` (차단) |
+| 7 | 상태 유지 체크 후 로그인 | `remember-me` 쿠키 7일 발급 |
+| 8 | 비밀번호 확인 불일치 | 오류 메시지 + DB 저장 0건 |
+
+이 과제로 확인한 것은 **세션과 쿠키는 별개의 저장소라는 점**(하나가 사라져도 다른 하나로 복구 가능),
+그리고 **검증은 DB에 닿기 전에 해야 한다는 점**이다.

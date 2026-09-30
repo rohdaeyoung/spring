@@ -29,7 +29,15 @@ public class SecurityConfig {
                 .loginPage("/login")
                 .defaultSuccessUrl("/")
                 .failureUrl("/login?error")
-                .permitAll());
+                .permitAll())
+            .logout(logout -> logout // 3. 로그아웃 설정
+                .logoutUrl("/logout") // 로그아웃 처리 URL (POST)
+                .logoutSuccessUrl("/login?logout") // 로그아웃 후 이동
+                .invalidateHttpSession(true) // 세션 삭제
+                .deleteCookies("JSESSIONID", "remember-me")) // 쿠키 삭제
+            .rememberMe(remember -> remember // 5주차 연습문제 ① : 로그인 상태 유지
+                .key("first-portfolio-remember-me-key") // 쿠키 서명용 비밀키
+                .tokenValiditySeconds(60 * 60 * 24 * 7)); // 7일 유지
         return http.build();
     }
 }
