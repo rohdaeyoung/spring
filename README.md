@@ -2245,3 +2245,595 @@ DB 확인   : select count(*) from member where username='student3';  →  0
 
 이 과제로 확인한 것은 **세션과 쿠키는 별개의 저장소라는 점**(하나가 사라져도 다른 하나로 복구 가능),
 그리고 **검증은 DB에 닿기 전에 해야 한다는 점**이다.
+
+---
+
+# 6주차 수업 내용
+
+6주차는 **권한(ROLE)에 따라 접근을 제어하고, 관리자 페이지를 분리**하는 것이 목표다.
+5주차가 "너 누구야?"(**인증**)였다면, 6주차는 **"너 이거 해도 돼?"(인가)** 다.
+
+## 1. 접근 제어 실패 — OWASP A01
+
+지난 주에 본 OWASP Top 10 중 **A01 접근 제어 실패**가 오늘의 주제다.
+
+| 유형 | 예시 |
+| ---- | ---- |
+| 관리자 페이지 노출 | `/admin` 을 직접 입력하니 그냥 열림 |
+| 남의 정보 조회 (IDOR) | `/order/1001` → `/order/1002` 번호만 바꿈 |
+| 권한 상승 | 일반 회원이 요청을 조작해 USER → ADMIN |
+
+**공통 원인은 하나다.** 로그인은 했는데 **권한 검사(인가)를 빼먹은 것**.
+
+> ⚠️ **"메뉴에 안 보이니 괜찮겠지"** → **화면 숨김은 보안이 아니다.**
+
+## 2. 권한 관리 모델
+
+| 모델 | 방식 | 예시 |
+| ---- | ---- | ---- |
+| **RBAC** (Role-Based) — 오늘 실습 | 사람 → **역할(Role)** → 권한 | USER / MANAGER / ADMIN |
+| ABAC (Attribute-Based) | 부서·시간·위치 등 속성 조건 | - |
+
+```
+사람(회원)              역할(ROLE)              권한(할 수 있는 일)
+student1  ┐
+student2  ├──────▶  USER     ──────▶  내 정보 보기
+teacher   │         MANAGER  ──────▶  회원목록 보기
+admin     ┘         ADMIN    ──────▶  권한 변경 · 회원 삭제
+```
+
+> 사람에게 권한을 하나하나 주지 않고 **역할을 부여한다** → 관리가 쉽고 실수가 적다.
+
+- **최소 권한 원칙 (Least Privilege)** : 해킹 당한 후 피해를 최소화한다
+- 보안 기능 구현(필수) : 로그인했어도 **요청마다 권한 검사**
+
+### 서비스별 역할 예시
+
+| 서비스 | 역할(ROLE) 예시 |
+| ------ | --------------- |
+| 쇼핑몰 | 구매자 · 판매자 · 운영자 |
+| 학사 시스템 | 학생 · 교수 · 학사 관리자 |
+| GitHub 저장소 | Read · Triage · Write · Maintain · Admin |
+| **우리 포트폴리오** | **USER · MANAGER · ADMIN** |
+
+- 관리자 화면은 **URL부터 분리** : `/admin/**`
+- 위험한 기능(권한 변경·삭제)은 **관리자만**
+
+## 3. 구조 변경 — 오늘 작성할 파일 4개
+
+```
+com/example/demo/
+├── config/
+│   └── SecurityConfig.java      (M) URL 권한 규칙, 메서드 보안 ON
+├── controller/
+│   ├── AdminController.java     (U) 관리자 전용 컨트롤러 (신규)
+│   └── MemberController.java    (M) /mypage 추가
+└── model/service/
+    └── MemberService.java       (M) 조회 · 권한 변경 · 삭제 추가
+
+resources/templates/
+├── admin/members.html   (U)  회원 관리
+├── error/403.html       (U)  접근 거부
+├── mypage.html          (U)  내 정보
+└── index.html           (M)  권한별 메뉴
+```
+
+> **엔티티·리포지토리·DTO 는 그대로 유지!** 5주차에 만든 `Member.role` 컬럼을 오늘 사용한다.
+> `JpaRepository` 기본 메서드(`findAll` · `findById` · `save` · `delete`)만으로 충분하다.
+
+## 4. 권한별 메뉴 — index.html
+
+제공 코드의 ①~③ 만 반영했다. (`index_네비게이션_교체부분.html`)
+
+### ① 권한 배지 스타일 추가
+
+```css
+.role-badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; color: var(--white-color); }
+.role-ADMIN   { background: #e05260; }
+.role-MANAGER { background: #f0a030; }
+.role-USER    { background: var(--secondary-color); }
+.navbar .nav-link.nav-link-admin { color: #e05260; }
+```
+
+### ② 권한별 메뉴 추가
+
+```html
+<!-- 로그인한 사람만 보이는 메뉴 : 내 정보 -->
+<li class="nav-item" sec:authorize="isAuthenticated()">
+    <a class="nav-link" th:href="@{/mypage}">내 정보</a>
+</li>
+
+<!-- 관리자(ROLE_ADMIN)만 보이는 메뉴 -->
+<li class="nav-item" sec:authorize="hasRole('ADMIN')">
+    <a class="nav-link nav-link-admin" th:href="@{/admin/members}">관리자</a>
+</li>
+```
+
+> ⚠️ **메뉴를 숨겨도 주소(URL) 직접 입력은 막지 못한다!** — 뒤에서 직접 뚫어본다.
+
+### ③ 내 권한 배지
+
+```html
+<span class="navbar-user me-3"><strong sec:authentication="name">user</strong>님
+    <span sec:authorize="hasRole('ADMIN')"   class="role-badge role-ADMIN">ADMIN</span>
+    <span sec:authorize="hasRole('MANAGER')" class="role-badge role-MANAGER">MANAGER</span>
+    <span sec:authorize="hasRole('USER')"    class="role-badge role-USER">USER</span>
+</span>
+```
+
+**실행 결과 — USER 로그인 (관리자 메뉴 없음)**
+
+![USER 네비게이션](docs/images/week6-nav-user.png)
+
+## 5. 내 정보 페이지 — /mypage
+
+```java
+// MemberService : 로그인한 아이디로 회원 조회
+public Member findByUsername(String username) {
+    return memberRepository.findByUsername(username)
+            .orElseThrow(() -> new IllegalArgumentException(
+                    "회원이 존재하지 않습니다 : " + username));
+}
+```
+
+```java
+// MemberController (import java.security.Principal, Member)
+@GetMapping("/mypage") // 내 정보 : 로그인한 사람만
+public String mypage(Principal principal, Model model) { // 현재 로그인 사용자
+    Member member = memberService.findByUsername(principal.getName());
+    model.addAttribute("member", member);
+    return "mypage"; // mypage.html 연결
+}
+```
+
+- **`Principal`** : 파라미터에 적기만 하면 시큐리티가 로그인 사용자를 넣어준다
+- **왜 `/mypage?id=3` 이 아닐까?** → **번호 조작(IDOR) 차단**
+  - id를 URL로 받지 않고 **로그인 아이디로 조회**하면 남의 정보를 볼 수 없다
+
+**실행 결과 — http://localhost:8080/mypage**
+
+![내 정보 화면](docs/images/week6-mypage.png)
+
+## 6. ROLE 과 권한(Authority)
+
+5주차 `MemberService.loadUserByUsername()` 의 이 줄을 다시 보자.
+
+```java
+.roles(member.getRole())  // "USER" 가 ROLE_USER 로 변환
+```
+
+내부 동작 : **`ROLE_` 을 자동으로 붙여서 비교**한다.
+
+```
+DB member.role     loadUserByUsername()      세션 권한 (Authority)
+    ADMIN      →      .roles("ADMIN")     →      ROLE_ADMIN
+```
+
+| ⭕ 맞는 비교 | ❌ 서버 시작 오류 |
+| ------------ | ----------------- |
+| `hasRole("ADMIN")` | `hasRole("ROLE_ADMIN")` |
+| `hasAuthority("ROLE_ADMIN")` | → `should not start with ROLE_` |
+
+### DB 권한 ≠ 세션 권한 일 수 있다
+
+**권한은 로그인하는 순간 세션에 복사된다.**
+
+```
+① 로그인  →  DB member.role = USER  →  세션에 복사 [ROLE_USER]
+② 관리자가 DB 를 ADMIN 으로 변경  →  세션은 그대로 [ROLE_USER]
+③ 다시 로그인  →  [ROLE_ADMIN] ✓
+```
+
+> 즉 **DB를 바꿔도 다시 로그인해야 반영된다.** 내 정보 화면에서 이 둘을 같이 보여주는 이유다.
+
+## 7. 관리자 계정 만들기
+
+```sql
+-- 현재 회원과 권한 확인
+SELECT id, username, name, role FROM member;
+
+-- admin 계정을 관리자로 지정
+UPDATE member SET role = 'ADMIN' WHERE username = 'admin';
+```
+
+순서가 중요하다.
+
+1. **회원가입 화면에서** `admin / 1234 / 관리자` 로 가입 (비밀번호가 BCrypt로 저장됨)
+2. MySQL 확장에서 위 SQL 실행 → `role` 만 UPDATE
+3. 이미 로그인 중이었다면 → **로그아웃 후 다시 로그인**해야 새 권한 적용
+
+### 왜 SQL INSERT 로 만들지 않나?
+
+```sql
+-- ❌ 이렇게 하면 안 된다
+INSERT INTO member (username, password, name, role) VALUES ('admin2', '1234', '관리자2', 'ADMIN');
+```
+
+평문 `1234` 는 **BCrypt 형식이 아니므로 로그인 자체가 불가능**하다.
+반드시 **정상 가입 이후 `role` 만 UPDATE** 해야 한다.
+
+**실행 결과 — admin 로그인**
+
+![ADMIN 네비게이션](docs/images/week6-nav-admin.png)
+
+빨간 **관리자** 메뉴와 빨간 **ADMIN 배지**가 나타난다.
+
+## 8. 관리자 회원 목록 — AdminController
+
+```java
+// MemberService : 전체 회원 (id 순서)
+public List<Member> findAll() {
+    return memberRepository.findAll(Sort.by("id"));
+}
+```
+
+```java
+@Controller
+@RequestMapping("/admin") // 모든 URL 앞에 /admin (관리자 페이지 분리)
+public class AdminController {
+    @Autowired
+    MemberService memberService;
+
+    @GetMapping("/members") // GET /admin/members
+    public String members(Model model) {
+        List<Member> members = memberService.findAll();
+        model.addAttribute("members", members);
+        return "admin/members"; // templates/admin/members.html (폴더 포함)
+    }
+}
+```
+
+> `@RequestMapping("/admin")` 을 클래스에 붙이면 **클래스의 모든 URL 앞에 `/admin`** 이 붙는다.
+
+**실행 결과 — http://localhost:8080/admin/members**
+
+![회원 관리 화면](docs/images/week6-admin-members.png)
+
+## 9. 권한 변경·삭제 서비스
+
+```java
+// 관리자가 부여할 수 있는 권한 (화면에서 넘어온 값을 그대로 믿지 않는다)
+private static final List<String> ROLES = List.of("USER", "MANAGER", "ADMIN");
+
+public void changeRole(Long id, String role) { // 권한 변경
+    if (!ROLES.contains(role)) { // 허용된 권한만
+        throw new IllegalArgumentException("허용되지 않는 권한입니다 : " + role);
+    }
+    Member member = memberRepository.findById(id)
+            .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
+    member.setRole(role);
+    memberRepository.save(member); // UPDATE (id 가 있으면 수정)
+}
+
+public void deleteMember(Long id) { // 회원 삭제
+    Member member = memberRepository.findById(id)
+            .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
+    memberRepository.delete(member); // DELETE
+}
+```
+
+| 항목 | 내용 |
+| ---- | ---- |
+| ① **ROLES 화이트리스트** | 개발자도구로 select 값을 `SUPER` 로 바꿔 보내도 거부 |
+| ② `findById` | 없는 번호 → 예외 메시지 |
+| ③ `save()` | **id 없으면 INSERT, id 있으면 UPDATE** |
+
+## 10. 관리자 컨트롤러 — POST
+
+```java
+@PostMapping("/members/{id}/role") // POST /admin/members/3/role
+public String changeRole(@PathVariable Long id, @RequestParam String role,
+                         RedirectAttributes redirect) {
+    try {
+        memberService.changeRole(id, role);
+        redirect.addFlashAttribute("message", "권한을 " + role + " (으)로 변경했습니다.");
+    } catch (IllegalArgumentException e) {
+        redirect.addFlashAttribute("error", e.getMessage());
+    }
+    return "redirect:/admin/members"; // 새로고침 중복 전송 방지 (PRG 패턴)
+}
+```
+
+| 어노테이션 | 값을 꺼내는 곳 |
+| ---------- | -------------- |
+| `@PathVariable` | URL 경로 `{id}` → 3 |
+| `@RequestParam` | `<select name="role">` |
+| `addFlashAttribute` | redirect 후 1회 표시 |
+
+> **PRG 패턴** : redirect + flash 메시지 → 새로고침해도 **다시 전송 안 됨**
+
+## 11. ⚠️ 보안 구멍 발견 — 권한 상승
+
+여기까지 하면 관리자 기능이 완성된 것 같다. **그런데 정말 관리자만 쓸 수 있을까?**
+
+`student1 (USER)` 로 로그인한 뒤, 메뉴에 관리자는 없지만 **주소창에 직접 입력**해본다.
+
+```
+/admin/members  →  회원 관리 화면이 그대로 열린다
+내 권한을 ADMIN 으로 변경  →  변경 성공
+재로그인  →  관리자 메뉴 등장
+```
+
+**이것이 OWASP A01 접근 제어 실패 – 권한 상승이다.**
+
+## 12. 접근 제어 3단계
+
+| 단계 | 위치 | 역할 | 비유 |
+| ---- | ---- | ---- | ---- |
+| ① 화면 `sec:authorize` | Thymeleaf | 보이기/숨기기만 — **보안 아님(편의)** | 안내판 떼기 (문은 열려 있음) |
+| ② URL `requestMatchers` | SecurityConfig | **1차 잠금** — 컨트롤러 도착 **전에** 차단 | 출입문 카드키 |
+| ③ 메서드 `@PreAuthorize` | Service | **2차 잠금** — 메서드 실행 **직전에** 차단 | 금고 비밀번호 |
+
+> **방금 뚫린 이유 : ①만 했기 때문.** 주소창에 URL을 직접 입력하면 뚫린다.
+> ②가 있는데 ③은 왜? → **규칙 실수·누락 대비 (이중 잠금)**
+
+## 13. URL 권한 규칙 추가 (② 1차 잠금)
+
+```java
+.authorizeHttpRequests(auth -> auth
+    .requestMatchers("/", "/hello", "/detailed_web.html",
+                     "/login", "/signup", "/error").permitAll()
+    .requestMatchers("/css/**", "/js/**", "/images/**", "/fonts/**").permitAll()
+    .requestMatchers("/admin/**").hasRole("ADMIN")                 // [6주차] 관리자만
+    .requestMatchers("/testdb").hasAnyRole("ADMIN", "MANAGER")     // 연습문제 ②
+    .anyRequest().authenticated())                                 // 나머지 : 로그인 필요
+```
+
+- 규칙은 **위에서부터 순서대로** — 구체적인 규칙이 위, `anyRequest()` 는 **항상 마지막**
+  - 아래에 쓰면 **서버 시작 오류** (`Can't configure requestMatchers after anyRequest`)
+- `/admin/**` : 하위 경로 **전부** (GET·POST 모두)
+- `hasRole("ADMIN")` ⭕ / `hasRole("ROLE_ADMIN")` ❌
+
+### 403 접근 거부 테스트
+
+서버 재시작 후 **세 가지 상태**로 `/admin/members` 에 접속한 실제 결과다.
+
+| 상태 | 결과 | 의미 |
+| ---- | ---- | ---- |
+| 비로그인 | `302 → /login` | 인증 필요 |
+| **student1 (USER)** | **403 접근 거부 화면** | **인가 실패** |
+| admin (ADMIN) | `200` 회원 관리 | 통과 |
+
+![403 접근 거부](docs/images/week6-403.png)
+
+- 403 화면 : 아이디 · **내 권한 [ROLE_USER]** · 요청 주소 표시
+- 공격 접근 재시도 → **화면부터 403, 권한 상승 불가**
+- 메뉴(①)는 그대로, **URL(②)을 잠갔다** → 주소 입력도 차단
+
+### 인가 처리 흐름
+
+```
+요청 /admin/members
+   ↓
+AuthorizationFilter (URL 규칙 확인, hasRole("ADMIN"))
+   ↓
+비로그인     → 302 로그인 화면                  인증 필요
+ROLE_USER   → 403 → error/403.html             인가 실패
+ROLE_ADMIN  → 통과 → AdminController → @PreAuthorize 재검사
+```
+
+> 403 화면은 **컨트롤러가 없다** — `templates/error/403.html` 에 두면 스프링 부트가 자동 연결한다.
+> (404 · 500 도 같은 방식)
+
+## 14. 메서드 보안 — @PreAuthorize (③ 2차 잠금)
+
+```java
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity // [6주차] 메서드 보안 활성화 : @PreAuthorize 사용
+public class SecurityConfig {
+```
+
+```java
+@PreAuthorize("hasRole('ADMIN')") // 관리자만 실행 가능 (2차 잠금)
+public void changeRole(Long id, String role) { ... }
+
+@PreAuthorize("hasRole('ADMIN')") // 관리자만 실행 가능 (2차 잠금)
+public void deleteMember(Long id) { ... }
+```
+
+- **`@EnableMethodSecurity` 가 없으면 `@PreAuthorize` 는 그냥 무시된다**
+- 검사 실패 → 403 (같은 403 화면)
+- **무엇을 잠그나?** 조회(`findAll`)는 그대로, **데이터를 바꾸는 메서드**만 잠근다
+
+### 이중 잠금 실험 — 실제로 해봤다
+
+URL 규칙(②)을 잠시 주석 처리하고 USER 계정으로 공격한 **실측 결과**다.
+
+| 상태 | 목록 GET | 변경·삭제 | 데이터 |
+| ---- | -------- | --------- | ------ |
+| 잠금 없음 | 200 | 성공 😱 | 변경됨 |
+| URL 규칙만 | 403 | 403 | 보호 |
+| **@PreAuthorize 만** | **200** | **403** | **보호** |
+| 둘 다 (최종) | 403 | 403 | 보호 |
+
+```
+URL 규칙 해제 상태 / student2(USER) 로 공격
+  목록 GET /admin/members        : 200   ← 화면은 열림(② 해제)
+  내 권한을 ADMIN 으로 변경      : 403   ← ③ @PreAuthorize 가 차단
+  회원 삭제                      : 403   ← ③ 차단
+  DB 확인                        : 아무것도 바뀌지 않음
+```
+
+> **실험 후 주석은 반드시 원래대로 복구했다.**
+
+### 왜 메서드 수준의 차단이 필요한가
+
+| 경우 | 2차 (URL) | 3차 (메서드) |
+| ---- | --------- | ------------ |
+| URL 패턴 오타 (`/admin/*`) | 통과 (규칙이 안 걸림) | 차단 |
+| 규칙 순서 실수 | 통과 (로그인만 확인) | 차단 |
+| 새 URL에서 같은 기능 호출 (`/api/...`) | 통과 (`/admin` 아래가 아님) | 차단 |
+| URL을 거치지 않는 호출 (스케줄러·배치) | **검사 자체가 없음** | 차단 |
+
+## 15. 권한 표현식 정리
+
+| 표현식 | 의미 | 사용 예 |
+| ------ | ---- | ------- |
+| `permitAll` | 누구나 | 메인, 로그인 |
+| `authenticated` / `isAuthenticated()` | 로그인한 사람 | `/mypage` |
+| `isAnonymous()` | 로그인 안 한 사람 | 로그인 버튼 |
+| `hasRole('ADMIN')` | ROLE_ADMIN 보유 | `/admin/**` |
+| `hasAnyRole('ADMIN','MANAGER')` | 둘 중 하나 | 연습문제 |
+| `hasAuthority('ROLE_ADMIN')` | 권한 문자열 그대로 | hasRole 과 동일 |
+| `authentication.name` | 로그인 아이디 | "나" 표시 |
+
+**세 곳(화면·URL·메서드)이 같은 표현식을 쓴다.**
+
+```
+화면   sec:authorize="hasRole('ADMIN')"            ← 문자열
+URL    .requestMatchers(...).hasRole("ADMIN")      ← 메서드 형태
+메서드 @PreAuthorize("hasRole('ADMIN')")           ← 문자열
+```
+
+## 16. 전체 테스트 & 오류 해결
+
+세 계정으로 처음부터 다시 : **비로그인 → student1 → admin**
+
+| 증상 | 원인 → 해결 |
+| ---- | ----------- |
+| `ROLE_ADMIN should not start with ROLE_` | `hasRole("ROLE_ADMIN")` → `hasRole("ADMIN")` |
+| `Can't configure requestMatchers after anyRequest` | 규칙 순서 → `/admin/**` 를 위로 |
+| USER 도 `@PreAuthorize` 메서드 실행됨 | `@EnableMethodSecurity` 누락 |
+| SQL 로 ADMIN 줬는데 메뉴 안 보임 | **다시 로그인** (세션 권한) |
+| 403 때 하얀 Whitelabel 화면 | `templates/error/403.html` 위치 확인 |
+| `/admin/members` 500 오류 | `return "admin/members"` (폴더 포함) |
+| 권한 변경 시 400 | `name="role"` ↔ `@RequestParam String role` |
+
+## 수업에서 확인한 것 정리
+
+| 항목 | 핵심 |
+| ---- | ---- |
+| 인증 vs 인가 | 인증(5주차) 통과 후 **요청마다 인가 검사** |
+| RBAC | 사람에게 권한이 아니라 **역할**을 준다 |
+| 화면 숨김 | **보안이 아니다** — URL 직접 입력으로 뚫린다 |
+| 접근 제어 3단계 | 화면(편의) → **URL(1차)** → **메서드(2차)** |
+| `hasRole("ADMIN")` | `ROLE_` 은 자동으로 붙는다 — 직접 쓰면 오류 |
+| 규칙 순서 | `anyRequest()` 는 항상 마지막 |
+| DB 권한 ≠ 세션 권한 | 권한은 **로그인 순간** 복사 → 바뀌면 재로그인 |
+| 403 화면 | `templates/error/403.html` (컨트롤러 없음) |
+| IDOR 차단 | id를 URL로 받지 않고 **로그인 아이디로 조회** |
+| 화이트리스트 | 화면에서 온 `role` 값을 **그대로 믿지 않는다** |
+| PRG 패턴 | redirect + flash → 새로고침 중복 전송 방지 |
+
+---
+
+# 6주차 과제
+
+## 문제 — 관리자 보호 & 매니저(MANAGER) 권한 추가하기
+
+### ① 관리자 본인 보호
+
+- 관리자가 **자기 자신을** USER 로 바꾸거나 삭제 → **관리자 0명!**
+- `changeRole`, `deleteMember` 에서 대상이 본인이면 거부
+  - 힌트 : `SecurityContextHolder … getName()`
+
+### ② 매니저(MANAGER) 권한 추가
+
+- 회원 관리에서 MANAGER 부여 가능하게
+- `/testdb` 는 **ADMIN, MANAGER 만** (USER 는 403)
+  - 힌트 : `hasAnyRole(...)`
+
+### (추가 도전)
+
+- 회원목록 메뉴도 USER 에게 숨기기
+
+## 풀이 순서
+
+### 1단계. 관리자 본인 보호 — MemberService
+
+로그인한 아이디를 꺼내 **대상과 같으면 거부**한다. 컨트롤러가 아니라 **서비스에 넣는 것이 중요하다** —
+어느 경로로 호출해도 막히기 때문이다.
+
+```java
+// 6주차 연습문제 ① : 대상이 로그인한 본인이면 거부 (관리자 0명 방지)
+private void checkNotSelf(Member target) {
+    String loginId = SecurityContextHolder.getContext().getAuthentication().getName();
+    if (target.getUsername().equals(loginId)) {
+        throw new IllegalArgumentException("자기 자신의 권한 변경·삭제는 할 수 없습니다.");
+    }
+}
+```
+
+두 메서드에서 **회원을 찾은 직후, 바꾸기 직전**에 호출한다.
+
+```java
+Member member = memberRepository.findById(id)
+        .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
+checkNotSelf(member); // ← 여기
+member.setRole(role);
+```
+
+> `Principal` 은 컨트롤러 파라미터에서만 받을 수 있다.
+> 서비스처럼 **어디서나** 로그인 정보가 필요하면 **`SecurityContextHolder`** 를 쓴다.
+
+**실행 결과 — admin 이 자기 자신의 권한 변경을 시도**
+
+![본인 보호 메시지](docs/images/week6-self-protect.png)
+
+```
+권한 변경 : 302 → /admin/members   "자기 자신의 권한 변경·삭제는 할 수 없습니다."
+회원 삭제 : 302 → /admin/members   "자기 자신의 권한 변경·삭제는 할 수 없습니다."
+```
+
+### 2단계. MANAGER 권한 추가 — 화이트리스트
+
+```java
+// 6주차 연습문제 ② : MANAGER 추가
+private static final List<String> ROLES = List.of("USER", "MANAGER", "ADMIN");
+```
+
+이 한 줄만 고치면 회원 관리 화면의 select 에서 MANAGER 를 선택해 저장할 수 있다.
+반대로 **목록에 없는 값은 계속 거부**된다.
+
+```
+role=SUPER 전송  →  "허용되지 않는 권한입니다 : SUPER"
+```
+
+### 3단계. /testdb 를 ADMIN·MANAGER 만 — SecurityConfig
+
+```java
+.requestMatchers("/testdb").hasAnyRole("ADMIN", "MANAGER") // 연습문제 ②
+```
+
+`/admin/**` **아래, `anyRequest()` 위**에 넣어야 한다. 순서가 틀리면 적용되지 않는다.
+
+### 4단계. (추가 도전) 회원목록 메뉴 숨기기 — index.html
+
+```html
+<!-- 회원목록은 ADMIN·MANAGER 에게만 보인다 -->
+<li class="nav-item" sec:authorize="hasAnyRole('ADMIN','MANAGER')">
+    <a class="nav-link" th:href="@{/testdb}">회원목록</a>
+</li>
+```
+
+> 이건 **①(화면) 단계**일 뿐이다. 실제 차단은 3단계의 URL 규칙이 한다.
+
+## 결과 정리
+
+### 권한별 접근 결과 (실측)
+
+| | USER | MANAGER | ADMIN |
+| --- | :---: | :---: | :---: |
+| `/mypage` | ✓ 200 | ✓ 200 | ✓ 200 |
+| `/testdb` (회원목록) | **403** | ✓ 200 | ✓ 200 |
+| `/admin/**` (회원 관리) | **403** | **403** | ✓ 200 |
+| 네비게이션 배지 | USER | MANAGER | ADMIN |
+| 회원목록 메뉴 | 숨김 | 보임 | 보임 |
+| 관리자 메뉴 | 숨김 | 숨김 | 보임 |
+
+PDF 29p 기대 결과표와 정확히 일치한다.
+
+### 수정한 파일
+
+| 구분 | 파일 | 핵심 |
+| ---- | ---- | ---- |
+| ① 본인 보호 | `model/service/MemberService.java` | `checkNotSelf()` + `SecurityContextHolder` |
+| ② MANAGER 추가 | `model/service/MemberService.java` | `ROLES` 에 `"MANAGER"` |
+| ② `/testdb` 제한 | `config/SecurityConfig.java` | `hasAnyRole("ADMIN","MANAGER")` |
+| 추가 도전 | `templates/index.html` | `sec:authorize="hasAnyRole(...)"` |
+
+이 과제로 확인한 것은 **검사는 화면이 아니라 서비스에 넣어야 한다는 점**(어느 경로로 호출해도 막힘),
+그리고 **권한이 바뀐 회원은 다시 로그인해야 적용된다는 점**이다.
+
+> ⚠️ 관리자 계정 `admin / 1234` 는 **실습용**이다. 실제 서비스는 강한 비밀번호 + 별도 관리가 필요하다.
