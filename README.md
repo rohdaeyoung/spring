@@ -3333,7 +3333,29 @@ public String membersApi() {
 }
 ```
 
-`admin/members.html` 상단에 링크를 추가하고, `admin/members-api.html` 을 만들었다.
+**제공 코드를 먼저 복사한다.** (7주차 제공코드)
+
+| 파일 | 내용 |
+| ---- | ---- |
+| `admin/members-api.html` | **API 를 쓰는 화면** (새 파일) |
+| `admin/members.html` | 상단에 **"API 버전으로 보기"** 링크가 추가된 6주차 화면 |
+
+직접 고친 학생은 `members_링크_추가부분.html` 의 한 곳만 반영하면 된다.
+
+```html
+<a th:href="@{/}" class="small"><i class="bi-house me-1"></i>메인으로</a>
+<!-- [7주차] 같은 기능을 JSON API(fetch)로 동작시키는 화면 -->
+<a th:href="@{/admin/members-api}" class="small ms-3"><i class="bi-braces me-1"></i>API 버전으로 보기</a>
+```
+
+제공 화면은 **우리가 만든 API 주소를 그대로 호출**한다 — 자바 코드를 고칠 필요가 없다.
+
+```javascript
+const API = '/api/admin/members';
+const ROLES = ['USER', 'MANAGER', 'ADMIN'];
+
+const res = await fetch(url, options); // 로그인 세션 쿠키는 브라우저가 자동으로 보낸다
+```
 
 **실행 결과 — http://localhost:8080/admin/members-api**
 
@@ -3344,9 +3366,10 @@ public String membersApi() {
 ![HTTP 요청·응답 기록창](docs/images/week7-api-log.png)
 
 ```
-GET  /api/admin/members/9999   404   (본문 없음)
-POST /api/admin/members        400   {"error":"아이디, 비밀번호, 이름은 필수입니다."}
-GET  /api/admin/members        200   [ {…}, {…}, {…}, {…} ]
+GET   /api/admin/members         200   [ {…} … 총 4건 ]
+PATCH /api/admin/members/4/role  200   {"id":4,"username":"postman1","name":"포스트맨","role":"MANAGER"}
+POST  /api/admin/members         400   {"error":"아이디, 비밀번호, 이름은 필수입니다."}
+GET   /api/admin/members/9999    404   (본문 없음)
 ```
 
 - 등록 POST **201**, 변경 PATCH **200**, 삭제 DELETE **204**
