@@ -1,6 +1,7 @@
 package com.example.demo.model.service;
 
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Sort;
@@ -27,6 +28,10 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
     private PasswordEncoder passwordEncoder;
 
     public Member signup(MemberForm form) { // 회원가입
+        // [7주차] JSON 요청에는 HTML 의 required 검사가 없다 → 서버에서 직접 검사
+        if (isBlank(form.getUsername()) || isBlank(form.getPassword()) || isBlank(form.getName())) {
+            throw new IllegalArgumentException("아이디, 비밀번호, 이름은 필수입니다.");
+        }
         // 5주차 연습문제 ② : 비밀번호 확인 검증 (DB 저장 전에 막는다)
         if (form.getPassword() == null || !form.getPassword().equals(form.getPasswordConfirm())) {
             throw new IllegalArgumentException("비밀번호가 일치하지 않습니다.");
@@ -67,8 +72,21 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
         return memberRepository.findAll(Sort.by("id"));
     }
 
+    // [7주차] 회원 1명 조회 : 없을 수도 있으므로 Optional
+    public Optional<Member> findById(Long id) {
+        return memberRepository.findById(id);
+    }
+
+    // [7주차 연습문제 ①] 아이디·이름 검색 (검색어가 없으면 전체)
+    public List<Member> search(String keyword) {
+        if (isBlank(keyword)) {
+            return findAll();
+        }
+        return memberRepository.findByUsernameContainingOrNameContaining(keyword, keyword);
+    }
+
     @PreAuthorize("hasRole('ADMIN')") // 관리자만 실행 가능 (2차 잠금)
-    public void changeRole(Long id, String role) { // 권한 변경
+    public Member changeRole(Long id, String role) { // 권한 변경 (바뀐 회원을 돌려준다)
         if (!ROLES.contains(role)) { // 허용된 권한만
             throw new IllegalArgumentException("허용되지 않는 권한입니다 : " + role);
         }
@@ -76,7 +94,7 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
                 .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
         checkNotSelf(member); // 6주차 연습문제 ① : 관리자 본인 보호
         member.setRole(role);
-        memberRepository.save(member); // UPDATE (id 가 있으면 수정)
+        return memberRepository.save(member); // UPDATE (id 가 있으면 수정)
     }
 
     @PreAuthorize("hasRole('ADMIN')") // 관리자만 실행 가능 (2차 잠금)
@@ -86,6 +104,8 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
         checkNotSelf(member); // 6주차 연습문제 ① : 관리자 본인 보호
         memberRepository.delete(member); // DELETE
     }
+
+    private boolean isBlank(String value) { return value == null || value.isBlank(); }
 
     // 6주차 연습문제 ① : 대상이 로그인한 본인이면 거부 (관리자 0명 방지)
     private void checkNotSelf(Member target) {

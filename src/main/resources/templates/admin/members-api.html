@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>회원 관리 (API 버전) - 관리자</title>
+
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+        <link th:href="@{/css/bootstrap.min.css}" rel="stylesheet">
+        <link th:href="@{/css/bootstrap-icons.css}" rel="stylesheet">
+        <link th:href="@{/css/templatemo-first-portfolio-style.css}" rel="stylesheet">
+
+        <style>
+            body { background: #f4f6fb; }
+            .admin-header {
+                background: linear-gradient(135deg, var(--primary-color) 0%, #3d4580 100%);
+                color: var(--white-color); padding: 28px 0 88px;
+            }
+            .admin-header h1 { color: var(--white-color); font-size: var(--h3-font-size); margin: 0; }
+            .admin-header a { color: rgba(255,255,255,.85); }
+            .admin-header a:hover { color: var(--white-color); }
+            .admin-body { margin-top: -64px; padding-bottom: 48px; }
+            .admin-card {
+                background: var(--white-color); border-radius: var(--border-radius-medium);
+                box-shadow: 0 .5rem 2rem rgba(0,0,0,.08); padding: 22px 24px; margin-bottom: 22px;
+            }
+            .admin-card h2 { font-size: var(--h5-font-size); margin: 0 0 16px; }
+            .role-badge { font-size: 11px; font-weight: 700; padding: 2px 10px; border-radius: 20px; color: #fff; }
+            .role-ADMIN { background: #e05260; } .role-MANAGER { background: #f0a030; }
+            .role-USER  { background: var(--secondary-color); }
+            table { font-size: 14px; } table td, table th { vertical-align: middle; }
+            /* HTTP 기록창 */
+            .log-panel {
+                background: #11131c; color: #cfd4e4; border-radius: var(--border-radius-medium);
+                padding: 16px; height: 620px; overflow-y: auto;
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+            }
+            .log-line { margin-bottom: 14px; }
+            .log-req { color: #8ab4ff; word-break: break-all; }
+            .log-body { white-space: pre-wrap; margin: 6px 0 0; color: #cfd4e4; }
+            .code-pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-weight: 700; color: #fff; font-size: 11px; }
+            .c2xx { background: #2e9e63; } .c4xx { background: #e05260; } .c3xx { background: #f0a030; }
+            .api-note { font-size: 12.5px; color: var(--p-color); }
+        </style>
+    </head>
+
+    <body>
+        <header class="admin-header">
+            <div class="container d-flex flex-wrap justify-content-between align-items-center gap-3">
+                <div>
+                    <a th:href="@{/admin/members}" class="small"><i class="bi-arrow-left me-1"></i>기존 회원 관리 (서버가 만든 HTML)</a>
+                    <h1 class="mt-1">{ } 회원 관리 <span style="opacity:.75">(API 버전)</span></h1>
+                </div>
+                <div class="d-flex align-items-center gap-3">
+                    <span><i class="bi-person-circle me-1"></i><strong sec:authentication="name">admin</strong>님
+                        <code class="ms-1 text-white" sec:authentication="principal.authorities">[ROLE_ADMIN]</code></span>
+                    <form th:action="@{/logout}" method="post" class="m-0">
+                        <button type="submit" class="btn btn-light btn-sm-custom"><i class="bi-box-arrow-right me-1"></i>로그아웃</button>
+                    </form>
+                </div>
+            </div>
+        </header>
+
+        <div class="container admin-body">
+            <div class="row g-4">
+                <!-- 왼쪽 : 기능 -->
+                <div class="col-lg-7">
+                    <div class="admin-card">
+                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                            <h2 class="m-0"><i class="bi-list-ul me-2"></i>회원 목록
+                                <code class="ms-2 api-note">GET /api/admin/members</code></h2>
+                            <!-- [연습문제 ①] 검색 -->
+                            <div class="input-group" style="max-width: 260px;">
+                                <input type="text" id="keyword" class="form-control form-control-sm" placeholder="아이디·이름 검색">
+                                <button class="btn btn-outline-primary btn-sm" onclick="loadMembers()"><i class="bi-search"></i></button>
+                                <button class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('keyword').value=''; loadMembers();"><i class="bi-arrow-counterclockwise"></i></button>
+                            </div>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table align-middle">
+                                <thead><tr>
+                                    <th>번호</th><th>아이디</th><th>이름</th><th>권한</th>
+                                    <th>권한 변경 <span class="api-note">PATCH</span></th>
+                                    <th>삭제 <span class="api-note">DELETE</span></th>
+                                </tr></thead>
+                                <tbody id="memberRows"></tbody>
+                            </table>
+                        </div>
+                        <p class="api-note m-0">① 버튼을 눌러도 페이지가 새로고침되지 않는다 — 데이터(JSON)만 주고받고 화면은 JavaScript 가 다시 그린다.</p>
+                    </div>
+
+                    <div class="row g-4">
+                        <div class="col-md-7">
+                            <div class="admin-card h-100">
+                                <h2><i class="bi-person-plus me-2"></i>회원 등록 <code class="api-note">POST /api/admin/members</code></h2>
+                                <input type="text" id="newUsername" class="form-control form-control-sm mb-2" placeholder="아이디">
+                                <input type="text" id="newName" class="form-control form-control-sm mb-2" placeholder="이름">
+                                <input type="password" id="newPassword" class="form-control form-control-sm mb-2" placeholder="비밀번호">
+                                <button class="btn btn-primary btn-sm w-100" onclick="createMember()">등록 (성공 시 201)</button>
+                                <p class="api-note mt-2 mb-0">빈 칸으로 보내 보기 → 400</p>
+                            </div>
+                        </div>
+                        <div class="col-md-5">
+                            <div class="admin-card h-100">
+                                <h2><i class="bi-search me-2"></i>1명 조회 <code class="api-note">GET /{id}</code></h2>
+                                <div class="input-group input-group-sm">
+                                    <input type="number" id="findId" class="form-control" placeholder="9999">
+                                    <button class="btn btn-outline-primary" onclick="findOne()">조회</button>
+                                </div>
+                                <p class="api-note mt-2 mb-0">없는 번호 → 404 Not Found</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 오른쪽 : HTTP 기록창 -->
+                <div class="col-lg-5">
+                    <div class="admin-card">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h2 class="m-0"><i class="bi-activity me-2"></i>HTTP 요청·응답</h2>
+                            <button class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('log').innerHTML=''">지우기</button>
+                        </div>
+                        <div class="log-panel" id="log"></div>
+                        <p class="api-note mt-2 mb-0">F12 → 네트워크(Network) 탭에서도 같은 요청을 볼 수 있다.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            const API = '/api/admin/members';
+
+            // 요청과 응답을 오른쪽 기록창에 출력한다
+            function log(method, url, status, body) {
+                const cls = status >= 200 && status < 300 ? 'c2xx' : (status >= 400 ? 'c4xx' : 'c3xx');
+                const text = body === undefined || body === '' ? '(본문 없음)' : JSON.stringify(body, null, 2);
+                document.getElementById('log').insertAdjacentHTML('afterbegin',
+                    `<div class="log-line"><div class="log-req">${method} ${url}
+                     <span class="code-pill ${cls}">${status}</span></div>
+                     <pre class="log-body">${text}</pre></div>`);
+            }
+
+            // fetch 로 API 호출 → 상태 코드와 본문을 기록
+            async function call(method, url, body) {
+                const options = { method, headers: {} };
+                if (body !== undefined) {
+                    options.headers['Content-Type'] = 'application/json'; // JSON 으로 보낸다
+                    options.body = JSON.stringify(body);
+                }
+                const res = await fetch(url, options);
+                let data;
+                if (res.status !== 204) {                 // 204 는 본문이 없다
+                    try { data = await res.json(); } catch (e) { data = ''; }
+                }
+                log(method, url, res.status, data);
+                return { status: res.status, data };
+            }
+
+            async function loadMembers() {
+                const keyword = document.getElementById('keyword').value.trim();
+                const url = keyword ? `${API}?keyword=${encodeURIComponent(keyword)}` : API;
+                const { status, data } = await call('GET', url);
+                if (status !== 200) return;
+                document.getElementById('memberRows').innerHTML = data.map(m => `
+                    <tr>
+                        <td>${m.id}</td><td>${m.username}</td><td>${m.name}</td>
+                        <td><span class="role-badge role-${m.role}">${m.role}</span></td>
+                        <td>
+                            <select class="form-select form-select-sm d-inline-block" style="width:110px" id="role-${m.id}">
+                                <option ${m.role === 'USER' ? 'selected' : ''}>USER</option>
+                                <option ${m.role === 'MANAGER' ? 'selected' : ''}>MANAGER</option>
+                                <option ${m.role === 'ADMIN' ? 'selected' : ''}>ADMIN</option>
+                                <option>SUPER</option>
+                            </select>
+                            <button class="btn btn-outline-primary btn-sm" onclick="changeRole(${m.id})">변경</button>
+                        </td>
+                        <td><button class="btn btn-outline-danger btn-sm" onclick="removeMember(${m.id})"><i class="bi-trash"></i></button></td>
+                    </tr>`).join('');
+            }
+
+            async function changeRole(id) { // PATCH : 일부만 수정
+                await call('PATCH', `${API}/${id}/role`, { role: document.getElementById('role-' + id).value });
+                loadMembers();
+            }
+
+            async function removeMember(id) { // DELETE : 성공하면 204
+                await call('DELETE', `${API}/${id}`);
+                loadMembers();
+            }
+
+            async function createMember() { // POST : 성공하면 201
+                const password = document.getElementById('newPassword').value;
+                await call('POST', API, {
+                    username: document.getElementById('newUsername').value,
+                    name: document.getElementById('newName').value,
+                    password: password,
+                    passwordConfirm: password
+                });
+                loadMembers();
+            }
+
+            async function findOne() { // 없는 번호면 404
+                await call('GET', `${API}/${document.getElementById('findId').value}`);
+            }
+
+            loadMembers(); // 화면이 열리면 목록부터 불러온다
+        </script>
+    </body>
+</html>
