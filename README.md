@@ -727,19 +727,47 @@ src/main/resources/
 <h2 class="mb-4">나는 백엔드를 꿈꾸는 대학생입니다.</h2>
 ```
 
-**실행 결과 — http://localhost:8080/**
+**실행 결과 — http://localhost:8080/** (아래 ③ 의 사진 교체까지 반영한 화면)
 
 ![3주차 메인 화면](docs/images/week3-hero.png)
 
 ### ③ 본인 사진으로 교체하기
 
-- 원본 이미지 : `happy-bearded-young-man.jpg`
-- 준비된 사진이 없으면 **무료 사용 가능한 웹 샘플 이미지**를 검색해 다운로드하고 `profile.png` 로 이름을 변경한다
-- **`static/images` 폴더 안에 넣고** 아래처럼 참조한다
+템플릿 원본 사진 2장을 **내 사진**으로 바꿨다. 두 파일 모두 `static/images` 폴더에 넣는다.
+
+| 위치 | 템플릿 원본 | 내 사진 |
+| ---- | ----------- | ------- |
+| 작은 아바타 (안녕하세요! 옆) | `worker.png` | **`profile.jpg`** (600 × 600) |
+| 큰 메인 사진 (오른쪽 원형) | `portrait-happy-excited-man-holding-laptop-computer.png` | **`hero-profile.jpg`** (900 × 594) |
 
 ```html
-<img th:src="@{/images/profile.png}" class="avatar-image img-fluid" alt="" />
+<img th:src="@{/images/profile.jpg}" class="avatar-image avatar-image-large img-fluid" alt="" />
+<img th:src="@{/images/hero-profile.jpg}" class="hero-image img-fluid" alt="" />
 ```
+
+바꾸면서 두 가지를 손봤다.
+
+**① PNG 대신 JPEG 으로 저장했다.**
+사진을 PNG 로 넣으니 큰 사진이 **962K** 나 됐다. 3주차 과제(Lighthouse)에서 "최적화 안 된 이미지"를 지적해 놓고
+같은 실수를 반복할 수는 없으므로, 사진에 맞는 **JPEG(품질 80)** 으로 바꿔 **196K** 로 줄였다. (아바타는 65K)
+
+**② 네모 사진을 원형으로 잘랐다.**
+템플릿 원본은 **배경이 없는 컷아웃 이미지**라서 흰 원 위에 사람만 떠 있는 디자인이었다.
+배경이 있는 네모 사진을 그대로 넣으면 사각형 액자처럼 보여서, `<style>` 에 아래를 추가해 흰 원(350px)에 맞췄다.
+
+```css
+/* 본인 사진 적용 : 원본은 배경이 없는 컷아웃 이미지라 네모 사진은 흰 원에 맞춰 잘라준다 */
+.hero-image {
+    width: 350px; min-width: 350px; height: 350px;
+    object-fit: cover; border-radius: 100%;
+    top: -50px; right: 0; left: 0; margin: auto;
+}
+```
+
+| 속성 | 역할 |
+| ---- | ---- |
+| `object-fit: cover` | 비율을 유지한 채 영역을 꽉 채우고 넘치는 부분은 잘라낸다 |
+| `border-radius: 100%` | 정사각형을 원으로 만든다 |
 
 - 주의 : 원본 이미지 크기(가로·세로) 이상으로 준비할 것. 너무 작으면 확대 시 해상도가 떨어진다
 - 크기는 부트스트랩의 `img-fluid` 덕분에 **자동으로 적절하게 맞춰진다**

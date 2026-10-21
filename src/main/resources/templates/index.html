@@ -52,6 +52,15 @@ https://templatemo.com/tm-578-first-portfolio
                 .navbar-expand-lg .navbar-nav .nav-link { margin-left: 7px; margin-right: 7px; font-size: 15px; }
                 .navbar i.navbar-icon { display: none; }
             }
+            /* 본인 사진 적용 : 원본은 배경이 없는 컷아웃 이미지라 네모 사진은 흰 원에 맞춰 잘라준다 */
+            .hero-image {
+                width: 350px; min-width: 350px; height: 350px;
+                object-fit: cover; border-radius: 100%;
+                top: -50px; right: 0; left: 0; margin: auto;
+            }
+            @media (max-width: 991px) {
+                .hero-image { width: 280px; min-width: 280px; height: 280px; }
+            }
         </style>
     </head>
     
@@ -162,7 +171,7 @@ https://templatemo.com/tm-578-first-portfolio
                         <div class="col-lg-7 col-12">
                             <div class="hero-text">
                                 <div class="hero-title-wrap d-flex align-items-center mb-4">
-                                    <img th:src="@{/images/worker.png}" class="avatar-image avatar-image-large img-fluid" alt="">
+                                    <img th:src="@{/images/profile.jpg}" class="avatar-image avatar-image-large img-fluid" alt="">
 
                                     <h1 class="hero-title ms-3 mb-0">안녕하세요!</h1>
                                 </div>
@@ -174,7 +183,7 @@ https://templatemo.com/tm-578-first-portfolio
 
                         <div class="col-lg-5 col-12 position-relative">
                             <div class="hero-image-wrap"></div>
-                            <img th:src="@{/images/portrait-happy-excited-man-holding-laptop-computer.png}" class="hero-image img-fluid" alt="">
+                            <img th:src="@{/images/hero-profile.jpg}" class="hero-image img-fluid" alt="">
                         </div>
 
                     </div>
