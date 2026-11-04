@@ -114,6 +114,11 @@ https://templatemo.com/tm-578-first-portfolio
                         <li class="nav-item">
                             <a class="nav-link click-scroll" href="#section_5">연락처</a>
                         </li>
+
+                        <!-- [9주차] 게시판 : 목록·상세는 누구나 -->
+                        <li class="nav-item">
+                            <a class="nav-link" th:href="@{/board}">게시판</a>
+                        </li>
                         <!-- [5주차] 회원 전용 페이지 : 로그인하지 않으면 로그인 화면으로 이동 -->
                         <!-- [6주차] 연습문제 추가도전 : 회원목록은 ADMIN·MANAGER 에게만 보인다 -->
                         <li class="nav-item" sec:authorize="hasAnyRole('ADMIN','MANAGER')">

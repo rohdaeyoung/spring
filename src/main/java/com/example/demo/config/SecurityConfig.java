@@ -30,6 +30,7 @@ public class SecurityConfig {
                                  "/login", "/signup", "/error").permitAll()
                 .requestMatchers("/css/**", "/js/**", "/images/**", "/fonts/**").permitAll()
                 .requestMatchers("/api/hello").permitAll()     // [7주차] 첫 API : 누구나
+                .requestMatchers("/board", "/board/{id:\\d+}").permitAll() // [9주차] 게시판 목록·상세 : 누구나
                 .requestMatchers("/admin/**",
                                  "/api/admin/**").hasRole("ADMIN") // [6주차] 관리자만 + [7주차] 관리자 API
                 .requestMatchers("/testdb").hasAnyRole("ADMIN", "MANAGER") // 연습문제 ② : 회원목록

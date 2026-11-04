@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title th:text="${listTitle != null ? listTitle : '게시판'} + ' - First Portfolio'">게시판 - First Portfolio</title>
+
+        <!-- [9주차] 게시판 목록 : GET /board  (컨트롤러가 넘겨주는 값 : posts, 연습문제 ② listTitle) -->
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+        <link th:href="@{/css/bootstrap.min.css}" rel="stylesheet">
+        <link th:href="@{/css/bootstrap-icons.css}" rel="stylesheet">
+        <link th:href="@{/css/templatemo-first-portfolio-style.css}" rel="stylesheet">
+        <link th:href="@{/css/board.css}" rel="stylesheet">
+    </head>
+
+    <body>
+        <header class="board-header">
+            <div class="container d-flex flex-wrap justify-content-between align-items-center gap-3">
+                <div>
+                    <a th:href="@{/}" class="small"><i class="bi-house me-1"></i>메인으로</a>
+                    <a th:if="${listTitle}" th:href="@{/board}" class="small ms-3"><i class="bi-list-ul me-1"></i>전체 글 보기</a>
+                    <!-- listTitle 이 없으면 "게시판", 있으면 그 값 (연습문제 ② : 내가 쓴 글) -->
+                    <h1 class="mt-1"><i class="bi-chat-square-text me-2"></i><span th:text="${listTitle != null ? listTitle : '게시판'}">게시판</span></h1>
+                </div>
+                <div class="d-flex align-items-center gap-3">
+                    <th:block sec:authorize="isAnonymous()">
+                        <a th:href="@{/login}" class="btn btn-light btn-sm-custom"><i class="bi-box-arrow-in-right me-1"></i>로그인</a>
+                    </th:block>
+                    <th:block sec:authorize="isAuthenticated()">
+                        <span><i class="bi-person-circle me-1"></i><strong sec:authentication="name">student1</strong>님</span>
+                        <form th:action="@{/logout}" method="post" class="m-0">
+                            <button type="submit" class="btn btn-light btn-sm-custom"><i class="bi-box-arrow-right me-1"></i>로그아웃</button>
+                        </form>
+                    </th:block>
+                </div>
+            </div>
+        </header>
+
+        <main class="board-body">
+            <div class="container">
+                <!-- 삭제 후 redirect:/board?deleted -->
+                <div th:if="${param.deleted}" class="alert alert-success py-2" role="alert">
+                    <i class="bi-check-circle me-1"></i> 글이 삭제되었습니다.
+                </div>
+
+                <div class="board-card">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                        <!-- "전체 N개" = posts 목록의 크기 -->
+                        <h5 class="mb-0">전체 <span th:text="${#lists.size(posts)}">0</span>개</h5>
+                        <!-- 글쓰기 버튼 : 로그인한 사람에게만 보인다 -->
+                        <div sec:authorize="isAuthenticated()" class="d-flex gap-2">
+                            <a th:unless="${listTitle}" th:href="@{/board/my}" class="btn btn-outline-secondary btn-sm-custom"><i class="bi-person-lines-fill me-1"></i>내가 쓴 글</a>
+                            <a th:href="@{/board/write}" class="custom-btn btn btn-sm-custom"><i class="bi-pencil-square me-1"></i>글쓰기</a>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr><th style="width: 80px;">번호</th><th>제목</th><th style="width: 140px;">작성자</th><th style="width: 160px;">작성일</th><th style="width: 70px;">조회</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr th:if="${#lists.isEmpty(posts)}">
+                                    <td colspan="5" class="empty-row"><i class="bi-inbox me-1"></i>아직 글이 없습니다.</td>
+                                </tr>
+                                <tr th:each="post : ${posts}">
+                                    <td th:text="${post.id}">1</td>
+                                    <td><a th:href="@{/board/{id}(id=${post.id})}" class="post-title-link" th:text="${post.title}">첫 글입니다</a></td>
+                                    <!-- 글 → 작성자(Member) → 이름 (@ManyToOne 덕분) -->
+                                    <td>
+                                        <span th:text="${post.author.name}">홍길동</span>
+                                        <span sec:authorize="isAuthenticated()" th:if="${post.author.username == #authentication.name}" class="me-badge ms-1">나</span>
+                                    </td>
+                                    <td class="post-meta" th:text="${#temporals.format(post.createdAt, 'yyyy-MM-dd HH:mm')}">2026-11-04 10:00</td>
+                                    <td th:text="${post.viewCount}">0</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </body>
+</html>

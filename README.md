@@ -3574,3 +3574,739 @@ DELETE 없는 회원           : 400  {"error":"회원이 존재하지 않습니
 
 이 과제로 확인한 것은 **메서드 이름만으로 검색 쿼리가 만들어진다는 점**,
 그리고 **반복되는 예외 처리는 한 곳으로 모을 수 있고, 모은 뒤에도 응답은 그대로여야 한다는 점**이다.
+
+---
+
+# 9주차 수업 내용
+
+9주차는 **게시판(CRUD)** 을 만들고, **본인이 쓴 글만 수정·삭제**할 수 있게 하는 것이 목표다.
+기말 범위는 **오늘 만든 게시판을 기준으로 기능을 확장**한다.
+
+| 주차 | 게시판에 더해지는 것 |
+| ---- | -------------------- |
+| **9주차 (오늘)** | 글쓰기·수정·삭제, 작성자, 본인 확인 |
+| 10주차 | 페이징, 검색, 댓글 |
+| 11주차 | 특강·스터디 모집글(정원) + 포스터 이미지 첨부 + 신청 바구니 |
+| 12~14주차 | 실시간 알림, 선착순 신청, 메일·만료 |
+
+## 1. 웹 트렌드 — 게시판
+
+게시판은 거의 모든 웹 서비스에 있는 **필수 기능**이다. (공지사항, 자유게시판, Q&A, 리뷰, 커뮤니티)
+기본 기능은 **CRUD** — Create(쓰기), Read(읽기), Update(수정), Delete(삭제) 이다.
+
+게시판에 꼭 필요한 것
+
+- **누가 썼는지** (작성자)
+- **내 글만 고칠 수 있는지** (권한)
+- **없는 글을 열면** 안내 화면이 나오는지 (404)
+
+| 서비스 | 게시판 모습 | 특징 |
+| ------ | ----------- | ---- |
+| 에브리타임 | 학교별 자유게시판 | 익명·실명 선택, 신고 기능 |
+| 네이버 카페 | 카페별 여러 게시판 | 등급별 쓰기 권한 |
+| GitHub Issues | 저장소별 이슈 | 작성자·담당자, 상태(열림/닫힘) |
+| **우리 포트폴리오** | 게시판 (오늘) | 작성자 연결, **본인 글만 수정·삭제** |
+
+## 2. 게시판 보안
+
+게시판의 대표적인 위협은 **무단 글 수정·삭제**다. 주소의 **번호만 바꿔서** 남의 글에 접근한다.
+7주차에 본 **OWASP A01 접근 제어 실패**와 같은 유형이다.
+
+> **화면에서 버튼만 숨기면?**
+> - 6주차 : 관리자 메뉴만 숨겼더니 → 주소로 들어갔다
+> - 9주차 : 수정 버튼만 숨기면 → **주소로 들어간다**
+>
+> → 서버가 반드시 **"이 글의 작성자가 맞나?"** 를 확인해야 한다.
+
+지금까지 서버가 확인한 것을 주차별로 정리하면 다음과 같다.
+
+| 주차 | 기준 | 질문 | 예 |
+| ---- | ---- | ---- | -- |
+| 5주차 | 로그인 | 누구세요? | 비로그인 → 로그인 화면 |
+| 6주차 | 역할(ROLE) | 관리자인가요? | USER → 관리자 페이지 **403** |
+| **9주차** | **주인(작성자)** | **이 글을 쓴 사람인가?** | 남의 글 수정 → **403** |
+
+## 3. 오늘의 실습 순서
+
+```
+단계 1       단계 2        단계 3·4         단계 5           단계 6
+제공 화면 →  글 엔티티  →  글쓰기·목록  →   수정·삭제    →   본인 확인
+복사         (작성자 연결)  ·상세 보기       ⚠ 남의 글도      (서버가 글의
+                                            고쳐진다!         주인을 확인)
+```
+
+⚠ = **일부러 만나는 문제** → 그 자리에서 원인을 알고 고친다.
+
+## 4. 제공 화면과 컨트롤러의 약속
+
+제공 코드를 먼저 복사한다. `pom.xml` 은 그대로 두고 **자바 코드만** 작성한다.
+
+| 파일 | 역할 |
+| ---- | ---- |
+| `templates/board/list.html` | 게시판 목록 |
+| `templates/board/detail.html` | 글 상세 |
+| `templates/board/form.html` | 글쓰기 · 수정 **공용** 화면 |
+| `templates/error/404.html` | 없는 글 화면 |
+| `static/css/board.css` | 게시판 디자인 (관리자 화면과 같은 디자인) |
+| `templates/index.html` | 메뉴에 **"게시판"** 추가 |
+
+![메인 메뉴에 게시판 추가](docs/images/week9-nav.png)
+
+화면은 컨트롤러가 **어떤 이름으로 값을 넘겨줄지** 기다리고 있다. 이 이름이 틀리면 화면이 비거나 오류가 난다.
+
+| 화면 | 주소 | 컨트롤러가 넘겨줄 값 |
+| ---- | ---- | -------------------- |
+| `board/list.html` | `GET /board` | `posts` (글 목록) → "전체 N개" 도 이 목록의 크기 |
+| `board/detail.html` | `GET /board/{id}` | `post` (글 1개) |
+| `board/form.html` | `GET /board/write`, `/board/{id}/edit` | `postForm` (입력값), `postId` (수정일 때), `error` |
+
+## 5. 게시판 = CRUD
+
+게시판의 4가지 기능은 **JPA 리포지토리가 메서드 수준에서 이미 모두 제공**한다.
+
+| 기능 | SQL | JPA (리포지토리) | 화면 주소 (오늘) | 7주차 REST 로 구현하면? |
+| ---- | --- | ---------------- | ---------------- | ----------------------- |
+| 쓰기 (Create) | `INSERT` | `save()` | `POST /board/write` | `POST /api/posts` |
+| 목록 (Read) | `SELECT` | `findAll()` | `GET /board` | `GET /api/posts` |
+| 상세 (Read) | `SELECT … WHERE id` | `findById()` | `GET /board/3` | `GET /api/posts/3` |
+| 수정 (Update) | `UPDATE` | `save()` | `POST /board/3/edit` | `PATCH /api/posts/3` |
+| 삭제 (Delete) | `DELETE` | `delete()` | `POST /board/3/delete` | `DELETE /api/posts/3` |
+
+**왜 수정·삭제가 PATCH·DELETE 가 아니라 POST 인가?**
+
+- 오늘은 API 가 아니라 기존 **`@Controller` 방식**(화면)으로 개발한다
+- **HTML 폼은 GET·POST 만 보낼 수 있다** → PATCH·DELETE 불가
+- 그래서 **주소 끝에 할 일을 붙인다** (`/edit`, `/delete`)
+
+화면 주소 접근 규칙
+
+- 목록·상세 : **누구나** (GET)
+- 쓰기·수정·삭제 : **로그인한 사람** (폼 → POST)
+
+## 6. 글 엔티티 — Post.java (단계 1)
+
+`model/domain` 폴더에 `Post.java` 를 만든다. 4주차 `TestDB`, 5주차 `Member` 와 같은 방식이고,
+**작성자 연결(`@ManyToOne`)만 새로 등장**한다.
+
+```java
+@Entity // 게시글 엔티티 : posts 테이블
+@Table(name = "posts")
+@Data // set/get/tostring 등 필수 메서드 자동 생성
+public class Post {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY) // 자동 증가 (1, 2, 3 ...)
+    private Long id;
+
+    @Column(nullable = false, length = 100) // 제목 : 필수, 100자까지
+    private String title;
+
+    @Column(nullable = false, columnDefinition = "TEXT") // 내용 : 긴 글도 저장
+    private String content;
+
+    @ManyToOne(fetch = FetchType.LAZY) // 작성자 : 회원 1명이 글 여러 개 (N : 1)
+    @JoinColumn(name = "member_id", nullable = false) // 외래 키(FK) 컬럼 이름
+    private Member author;
+
+    @Column(nullable = false) // 작성 시간
+    private LocalDateTime createdAt;
+
+    private LocalDateTime updatedAt; // 수정 시간 (수정한 적 없으면 null)
+
+    @Column(nullable = false) // 조회수 (연습문제에서 사용)
+    private int viewCount = 0;
+}
+```
+
+### 글과 작성자 — 왜 `@ManyToOne` 인가
+
+**회원 1명이 글을 여러 개 쓴다** → 회원 1 : 글 N.
+관계는 **어느 쪽에서 읽느냐**에 따라 이름이 반대가 된다. 우리는 **글(Post) 기준**으로 읽는다.
+
+| 시점 | 읽는 법 | 어노테이션 | 붙는 위치 |
+| ---- | ------- | ---------- | --------- |
+| 회원에서 보면 | 회원 1명 → 글 여러 개 (1 : N) | `@OneToMany` | Member 클래스 |
+| **글에서 보면** | **글 여러 개 → 회원 1명 (N : 1)** | **`@ManyToOne`** | **Post 클래스** |
+
+작성자를 **아이디 글자만** 저장하면 어떻게 될까?
+
+| 문제 | `String writer = "student1"` | `Member author` + `@ManyToOne` |
+| ---- | ---------------------------- | ------------------------------ |
+| 작성자 이름 보기 | 회원을 다시 찾아야 한다 | `post.author.name` 한 번에 |
+| 회원 정보가 바뀌면 | 글 쪽 값과 어긋날 수 있다 | 항상 최신 회원 정보 |
+| 없는 회원 이름 입력 | 막을 수 없다 | **DB 의 FK 가 막아 준다** |
+| 회원 삭제 시 | 글만 남는다 (주인 없는 글) | FK 때문에 오류 → 처리 방법 필요 (10주차) |
+
+- DB 에서는 **외래 키(FK)** 로 저장된다 : `posts.member_id` = `member.id`
+- 자바에서는 **객체**로 다룬다 : `post.getAuthor().getName()` → 작성자 이름까지
+
+### 서버 재시작 → 테이블 확인
+
+터미널 로그에 테이블 생성과 외래 키 두 줄이 나온다.
+
+```
+Hibernate: create table posts (id bigint not null auto_increment, content TEXT not null,
+           created_at datetime(6) not null, title varchar(100) not null, updated_at datetime(6),
+           view_count integer not null, member_id bigint not null, primary key (id)) engine=InnoDB
+Hibernate: alter table posts add constraint FK... foreign key (member_id) references member (id)
+```
+
+| 자바 필드 | DB 컬럼 | 타입 |
+| --------- | ------- | ---- |
+| `id` | `id` | bigint (자동 증가, PK) |
+| `title` | `title` | varchar(100) |
+| `content` | `content` | TEXT |
+| `author` | **`member_id`** | bigint (**FK → member.id**) |
+| `createdAt` / `updatedAt` | `created_at` / `updated_at` | datetime |
+| `viewCount` | `view_count` | int |
+
+- **외래 키(FK) = DB 가 지키는 약속** : `member_id` 는 **반드시 있는 회원 번호**여야 한다
+- 그래서 **글 쓴 회원을 지울 때 문제가 생긴다** (10주차 해결)
+- `@JoinColumn(name = "member_id")` : DB 에 생길 외래 키 **컬럼 이름**
+- `fetch = FetchType.LAZY` : 연결된 회원 객체를 **바로 읽지 않고, 필요할 때 가져온다** (불필요한 조회 감소)
+
+## 7. 글쓰기 준비 — PostForm, PostRepository (단계 2)
+
+`model/dto` 에 `PostForm.java`, `model/repository` 에 `PostRepository.java` 를 만든다.
+
+```java
+@Data
+public class PostForm { // 글쓰기·수정 화면 → 컨트롤러로 전달되는 데이터(DTO)
+    private String title;   // 제목 (input name="title")
+    private String content; // 내용 (textarea name="content")
+    // 작성자는 받지 않는다 → 로그인한 사람으로 서버가 정한다
+}
+```
+
+```java
+@Repository // 게시글 리포지토리 : save, findAll, findById, delete 는 이미 있다
+public interface PostRepository extends JpaRepository<Post, Long> {
+}
+```
+
+**5주차 DTO 와 비교** — DTO 는 **받지 않는 값**으로 조작을 막는다.
+
+| 구분 | MemberForm (5주차) | PostForm (9주차) |
+| ---- | ------------------ | ---------------- |
+| 받는 값 | 아이디, 비밀번호, 확인, 이름 | 제목, 내용 |
+| 받지 않는 값 | `role` (권한) | **`author` (작성자)** |
+| 막는 것 | 권한 조작 | **작성자 바꿔치기** (남의 이름으로 글쓰기) |
+
+## 8. 글쓰기 서비스 — PostService (단계 2)
+
+`model/service` 에 `PostService.java` 를 만든다. 글쓰기 순서는 **① 검사 → ② 작성자 찾기 → ③ 저장**이다.
+
+```java
+@Service // 게시판 서비스
+public class PostService {
+    @Autowired
+    private PostRepository postRepository;
+    @Autowired
+    private MemberRepository memberRepository;
+
+    public List<Post> findAll() { // 전체 목록 (최신 글이 위로)
+        return postRepository.findAll(Sort.by(Sort.Direction.DESC, "id"));
+    }
+
+    public Post write(PostForm form, String username) { // 글쓰기 (작성자 = 로그인한 회원)
+        validate(form);                                           // ① 검사
+        Member author = memberRepository.findByUsername(username) // ② 작성자 찾기
+                .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
+        Post post = new Post();
+        post.setTitle(form.getTitle().trim());
+        post.setContent(form.getContent());
+        post.setAuthor(author); // 작성자는 화면이 아니라 서버가 정한다
+        post.setCreatedAt(LocalDateTime.now());
+        return postRepository.save(post); // ③ 저장 (INSERT)
+    }
+
+    private void validate(PostForm form) { // 빈 값 검사 (5주차 회원가입과 같은 방식)
+        if (form.getTitle() == null || form.getTitle().isBlank()
+                || form.getContent() == null || form.getContent().isBlank()) {
+            throw new IllegalArgumentException("제목과 내용을 모두 입력하세요.");
+        }
+        if (form.getTitle().trim().length() > 100) {
+            throw new IllegalArgumentException("제목은 100자까지 입력할 수 있습니다.");
+        }
+    }
+}
+```
+
+- `Sort.by(Sort.Direction.DESC, "id")` : 번호 **큰 순서** = 최신 글이 위로
+- `username` 은 화면이 아니라 **로그인 정보(`Principal`)** 에서 온다 → 작성자를 속일 수 없다
+
+## 9. 게시판 컨트롤러 — BoardController (단계 2)
+
+`controller` 에 `BoardController.java` 를 만든다.
+
+```java
+@Controller // 게시판 화면 컨트롤러
+@RequestMapping("/board") // 모든 URL 앞에 /board
+public class BoardController {
+    @Autowired
+    PostService postService;
+
+    @GetMapping // 목록 : GET /board (누구나)
+    public String list(Model model) {
+        List<Post> posts = postService.findAll();
+        model.addAttribute("posts", posts);
+        return "board/list";
+    }
+
+    @GetMapping("/write") // 글쓰기 화면 : GET /board/write (로그인 필요)
+    public String writeForm() {
+        return "board/form";
+    }
+
+    @PostMapping("/write") // 글쓰기 처리 : POST /board/write
+    public String write(PostForm postForm, Principal principal, Model model) {
+        try {
+            Post post = postService.write(postForm, principal.getName()); // 작성자 = 로그인한 사람
+            return "redirect:/board/" + post.getId(); // 저장 후 상세 화면으로
+        } catch (IllegalArgumentException e) { // 빈 제목·내용
+            model.addAttribute("error", e.getMessage());
+            return "board/form"; // 입력값 유지한 채 다시 글쓰기 화면
+        }
+    }
+}
+```
+
+- `@RequestMapping("/board")` : 클래스에 붙이면 **모든 메서드 주소 앞에 `/board`** 가 붙는다
+- 오류일 때 `board/form` 으로 돌아가도 입력값이 남는 이유 : 파라미터 `PostForm postForm` 이 **자동으로 모델에 `postForm` 이름으로 담기기** 때문
+
+`SecurityConfig.java` 에 한 줄 추가 — **목록·상세는 누구나**
+
+```java
+.requestMatchers("/board", "/board/{id:\\d+}").permitAll() // [9주차] 게시판 목록·상세 : 누구나
+```
+
+> `{id:\d+}` = **숫자만** → `/board/write`, `/board/my` 는 포함되지 않는다 (로그인 필요).
+> `/board/**` 로 넓게 열면 글쓰기 화면까지 누구에게나 열린다.
+
+### 글쓰기 · 목록 테스트
+
+| # | 계정 | 하는 일 | 기대 결과 | 확인 |
+| - | ---- | ------- | --------- | ---- |
+| 1 | 로그인 안 함 | 메인 → 게시판 메뉴 | 목록, **글쓰기 버튼 없음** | ✅ |
+| 2 | 로그인 안 함 | 주소창 `/board/write` | **로그인 화면**으로 이동 | ✅ |
+| 3 | student1 | 글쓰기 → 제목·내용 입력 → 등록 | 상세 화면으로 이동 | ✅ `/board/1` |
+| 4 | student1 | 제목 비우고 등록 | "제목과 내용을 모두 입력하세요." | ✅ |
+| 5 | admin | 글 하나 더 쓰기 | 목록 맨 위에 새 글, 작성자 = 관리자 | ✅ |
+
+**로그인 전 목록** — 글쓰기 버튼이 없다
+
+![게시판 목록 (로그인 전)](docs/images/week9-list-anon.png)
+
+**student1 로그인 후 목록** — 글쓰기 버튼이 보이고, 내 글에는 "나" 표시
+
+![게시판 목록 (로그인 후)](docs/images/week9-list-login.png)
+
+목록의 작성자 칸은 `post.author.name` 이다. **글 → 작성자(Member) → 이름** 으로 바로 따라간다 (`@ManyToOne` 덕분).
+
+**글쓰기 화면**과 **제목을 비우고 등록**했을 때
+
+![글쓰기 화면](docs/images/week9-form.png)
+
+![제목을 비우고 등록](docs/images/week9-empty-error.png)
+
+## 10. 상세 보기 (단계 3)
+
+`PostService` 에 추가 (import : `org.springframework.http.HttpStatus`, `org.springframework.web.server.ResponseStatusException`)
+
+```java
+public Post findById(Long id) { // 글 1개 (없으면 404 → templates/error/404.html)
+    return postRepository.findById(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "글이 존재하지 않습니다."));
+}
+```
+
+`BoardController` 에 추가
+
+```java
+@GetMapping("/{id}") // 상세 : GET /board/3 (누구나)
+public String detail(@PathVariable Long id, Model model) {
+    Post post = postService.findById(id);
+    model.addAttribute("post", post);
+    return "board/detail";
+}
+```
+
+- `@PathVariable` : 주소 안의 `{id}` 값을 꺼낸다 (`/board/3` → `id = 3`)
+- `ResponseStatusException(HttpStatus.NOT_FOUND)` → 스프링 부트가 **`templates/error/404.html`** 을 자동으로 보여 준다
+
+| 화면 | 언제 | 만든 주차 |
+| ---- | ---- | --------- |
+| `error/403.html` | 권한 없음 | 6주차 |
+| `error/404.html` | 없는 글 · 없는 주소 | **9주차** (7주차에 "같은 방식"이라고 했던 것) |
+
+**상세 화면 (글쓴이)**
+
+![상세 화면 (글쓴이)](docs/images/week9-detail-owner.png)
+
+**없는 글 `/board/99999` → 404**
+
+![없는 글 404](docs/images/week9-404.png)
+
+## 11. 수정 · 삭제 (단계 4)
+
+### 서비스 — JPA 의 변경 감지(Dirty Checking)
+
+JPA 에는 **`update()` 같은 수정 전용 메서드가 없다.**
+**조회한 엔티티의 값을 바꾸고 `save()`** 하면 DB 에 반영된다.
+
+```java
+public Post findForEdit(Long id) { // 수정 화면에 보여 줄 글
+    Post post = findById(id);
+    return post;
+}
+
+public Post edit(Long id, PostForm form) { // 글 수정
+    Post post = findForEdit(id);
+    validate(form);
+    post.setTitle(form.getTitle().trim());
+    post.setContent(form.getContent());
+    post.setUpdatedAt(LocalDateTime.now()); // 수정 시간 기록
+    return postRepository.save(post); // id 가 있으니 UPDATE
+}
+
+public void delete(Long id) { // 글 삭제
+    Post post = findById(id);
+    postRepository.delete(post); // DELETE
+}
+```
+
+`save()` 는 4주차부터 쓰던 **같은 메서드**다. **id 가 있느냐 없느냐**로 INSERT / UPDATE 가 갈린다.
+
+| 상황 | post 의 id | `save()` 가 하는 일 |
+| ---- | ---------- | ------------------- |
+| 글쓰기 (`write`) | 없음 (null) | **INSERT** |
+| 수정 (`edit`) | 있음 (2) | **UPDATE** |
+
+### 컨트롤러
+
+```java
+@GetMapping("/{id}/edit") // 수정 화면 : GET /board/3/edit
+public String editForm(@PathVariable Long id, Model model) {
+    Post post = postService.findForEdit(id);
+    PostForm postForm = new PostForm(); // 기존 내용을 폼에 채워서 보여 준다
+    postForm.setTitle(post.getTitle());
+    postForm.setContent(post.getContent());
+    model.addAttribute("postForm", postForm);
+    model.addAttribute("postId", id); // 화면이 "수정" 모드로 바뀐다
+    return "board/form";
+}
+
+@PostMapping("/{id}/edit") // 수정 처리 : POST /board/3/edit
+public String edit(@PathVariable Long id, PostForm postForm, Model model) {
+    try {
+        postService.edit(id, postForm);
+        return "redirect:/board/" + id;
+    } catch (IllegalArgumentException e) {
+        model.addAttribute("error", e.getMessage());
+        model.addAttribute("postId", id);
+        return "board/form";
+    }
+}
+
+@PostMapping("/{id}/delete") // 삭제 처리 : POST /board/3/delete
+public String delete(@PathVariable Long id) {
+    postService.delete(id);
+    return "redirect:/board?deleted"; // 목록 + "삭제되었습니다"
+}
+```
+
+**글쓰기·수정 화면 하나로 쓰기 (`form.html`)** — 화면 하나를 **`postId` 유무**로 나눠 쓴다.
+
+| 구분 | 글쓰기 | 수정 |
+| ---- | ------ | ---- |
+| `postId` | 없음 | 글 번호 |
+| 폼 전송 주소 | `POST /board/write` | `POST /board/{id}/edit` |
+| 입력칸 | 빈칸 | 기존 제목·내용 채움 |
+
+```html
+<!-- form.html : postId 가 있으면 수정, 없으면 글쓰기 -->
+<form th:action="${postId != null} ? @{/board/{id}/edit(id=${postId})} : @{/board/write}" method="post">
+```
+
+> `action` 이 아니라 **`th:action`** 을 써야 CSRF 토큰이 자동으로 들어간다 (5주차). 안 그러면 저장 시 403.
+
+### 수정 · 삭제 테스트 — ⚠ 문제 발견
+
+| # | 계정 | 하는 일 | 기대 결과 |
+| - | ---- | ------- | --------- |
+| 1 | student1 | 내 글 → 수정 → 저장 | 상세에 "수정 시간" 표시 |
+| 2 | student1 | 내 글 → 삭제 | 목록 + "글이 삭제되었습니다." |
+| 3 | student3 | student1 의 글 열기 | 수정·삭제 버튼 없음 (**화면에서 숨김**) |
+| 4 | student3 | 주소창에 `/board/2/edit` 입력 | **어? 수정 화면이 열린다** |
+| 5 | student3 | 제목을 바꾸고 저장 | **남의 글이 바뀌었다!** |
+
+6주차 관리자 페이지와 **똑같은 문제**다. **버튼은 숨겼지만, 서버는 확인하지 않았다.**
+→ 서버는 무엇을 확인해야 할까?
+
+## 12. 본인 확인 (단계 5)
+
+서버가 확인할 것 : **"로그인한 사람 = 글쓴이?"** → 다르면 `AccessDeniedException` → **403 화면**
+
+관리자는?
+
+- **수정은 본인만** (관리자라도 대신 고치면 안 된다)
+- **삭제는 본인 또는 관리자** (규칙 위반 글 정리)
+
+**왜 URL 규칙(`SecurityConfig`)으로는 못 할까?**
+`/board/2/edit` 의 주인이 누구인지는 **DB 를 봐야 안다.** 글마다 주인이 다르므로 **서비스 코드**에서 확인한다.
+
+| 구분 | 6주차 관리자 페이지 | 9주차 게시글 |
+| ---- | ------------------- | ------------ |
+| 기준 | 역할 (`ROLE_ADMIN`) | **주인 (글쓴이)** |
+| 확인 위치 | URL 규칙 + `@PreAuthorize` | **서비스 코드** (글마다 주인이 다름) |
+| 화면 | 관리자 메뉴 숨김 | 수정·삭제 버튼 숨김 |
+| 실패 시 | 403 | 403 |
+
+`PostService` 를 수정한다.
+(import : `org.springframework.security.access.AccessDeniedException`, `org.springframework.security.core.Authentication`, `org.springframework.security.core.context.SecurityContextHolder`)
+
+```java
+// ① findForEdit() 바꾸기
+public Post findForEdit(Long id) { // 수정 화면에 보여 줄 글 (본인 글만)
+    Post post = findById(id);
+    checkWriter(post); // ★ 추가
+    return post;
+}
+
+// ② delete() 바꾸기
+public void delete(Long id) { // 글 삭제 (본인 또는 관리자)
+    Post post = findById(id);
+    if (!isAdmin()) checkWriter(post); // ★ 추가 : 관리자는 누구 글이든 삭제 가능
+    postRepository.delete(post);
+}
+
+// ③ 클래스 아래쪽에 메서드 2개 추가
+private void checkWriter(Post post) { // 로그인한 사람이 글쓴이인지 → 아니면 403
+    String loginUsername = SecurityContextHolder.getContext().getAuthentication().getName();
+    if (!post.getAuthor().getUsername().equals(loginUsername)) {
+        throw new AccessDeniedException("본인이 쓴 글만 수정·삭제할 수 있습니다.");
+    }
+}
+
+private boolean isAdmin() { // 로그인한 사람이 관리자(ROLE_ADMIN)인지
+    Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+    return auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+}
+```
+
+- `edit()` 은 `findForEdit()` 를 부르므로 **수정 저장도 자동으로 본인 확인**이 된다
+- `SecurityContextHolder` : 서비스처럼 `Principal` 을 받을 수 없는 곳에서 **로그인 정보를 꺼내는 방법** (6주차)
+- `AccessDeniedException` → 스프링 시큐리티가 **403** 으로 바꾸고 `error/403.html` 을 보여 준다
+
+### 본인 확인 테스트
+
+| # | 계정 | 하는 일 | 기대 결과 | 확인 |
+| - | ---- | ------- | --------- | ---- |
+| 1 | student3 | 주소창 `/board/1/edit` (남의 글) | **403 접근 거부 화면** | ✅ |
+| 2 | student1 | 내 글 수정 | 수정됨, "수정 시간" 표시 | ✅ |
+| 3 | admin | student3 의 글 열기 | **관리자 삭제** 버튼 | ✅ |
+| 4 | admin | 관리자 삭제 | 삭제됨 | ✅ |
+| 5 | admin | student1 의 글 `/edit` 주소 입력 | **403** (수정은 본인만) | ✅ |
+
+**student3 이 student1 의 글을 열었을 때** — 수정·삭제 버튼이 없다 (1차 : 화면)
+
+![남의 글 상세](docs/images/week9-detail-other.png)
+
+**그래도 주소창에 `/board/1/edit` 를 입력하면** — 서버가 막는다 (2차 : 서비스)
+
+![남의 글 수정 시도 403](docs/images/week9-403-edit.png)
+
+**내 글 수정 후** — "수정" 시간이 표시된다
+
+![수정 후 상세](docs/images/week9-edit-done.png)
+
+**내 글 삭제 후** — `redirect:/board?deleted`
+
+![삭제 후 목록](docs/images/week9-deleted.png)
+
+**admin 이 남의 글을 열었을 때** — 수정 버튼 없이 **관리자 삭제**만 보인다
+
+![관리자 삭제 버튼](docs/images/week9-admin-delete.png)
+
+> **화면(버튼 숨김) + 서비스(본인 확인) = 이중 확인.**
+> 화면만 막으면 주소로 뚫리고, 서버만 막으면 사용자가 눌러 보고 나서야 403 을 만난다.
+
+## 13. 전체 테스트 & 오류 해결
+
+처음부터 다시 : 비로그인 목록 → 글쓰기 → 수정 → 남의 글 403 → 관리자 삭제
+
+| 증상 | 원인 → 해결 |
+| ---- | ----------- |
+| 게시판 목록이 로그인 화면으로 | `/board` **permitAll 누락** (단계 2) |
+| 글쓰기 저장 시 403 | 폼에 `th:action` 대신 `action` 사용 → **CSRF** (5주차) |
+| `/board/write` 가 누구에게나 열림 | `/board/**` 로 너무 넓게 허용 → **`{id:\d+}`** 사용 |
+| 글 제목 클릭 시 404 화면 | 상세(단계 3) 미구현, 또는 없는 번호 |
+| 남의 글이 수정됨 | **`checkWriter()` 누락** (단계 5) |
+| 글 쓴 회원을 관리자가 삭제하면 500 | **외래 키**(단계 1) 때문 → 10주차에 해결. 지금은 그 회원의 글을 먼저 삭제 |
+
+> 팁 : 오늘 쓴 **글은 깃에 올라가지 않는다.** 글은 **DB** 에 저장되고, 깃에는 **코드만** 올라간다.
+
+## 수업에서 확인한 것 정리
+
+| 항목 | 핵심 |
+| ---- | ---- |
+| 게시판 | CRUD = `save()` · `findAll()` / `findById()` · `save()` · `delete()` |
+| HTML 폼 | GET·POST 만 가능 → 수정·삭제는 **POST + 주소 끝에 할 일** (`/edit`, `/delete`) |
+| `@ManyToOne` | 글 N : 회원 1, 글 쪽에 붙인다, DB 에는 **FK (`member_id`)** |
+| `FetchType.LAZY` | 연결된 객체는 **필요할 때** 가져온다 |
+| `PostForm` | 작성자를 **받지 않는다** → 서버가 로그인 정보로 정한다 |
+| `save()` | id 없으면 INSERT, 있으면 UPDATE (변경 감지) |
+| `{id:\d+}` | 숫자만 → 목록·상세만 누구나, `/board/write` 는 로그인 필요 |
+| 404 | `ResponseStatusException(NOT_FOUND)` → `error/404.html` |
+| 본인 확인 | 서비스에서 **로그인한 사람 = 글쓴이?** → 아니면 `AccessDeniedException` (403) |
+| 관리자 | 수정은 본인만, **삭제는 본인 또는 관리자** |
+| 이중 확인 | 화면(버튼 숨김) + 서비스(본인 확인) |
+
+---
+
+# 9주차 과제
+
+## 문제 — 게시판 개선하기 (조회수 & 내가 쓴 글 모아 보기)
+
+### ① 조회수
+
+- 상세 화면을 열 때마다 `viewCount` 1 증가
+- 힌트 : `PostService` 에 `read(id)` → 컨트롤러 `detail()` 에서 사용
+- 확인 : 목록·상세의 조회 숫자
+
+### ② 내가 쓴 글 모아 보기
+
+- `GET /board/my` → **로그인한 사람의 글만, 최신 글이 위로**
+- 힌트 : 리포지토리에 **메서드 이름만** 추가
+- 힌트 : 목록 화면 재사용, `listTitle` 로 제목 변경
+
+| # | 하는 일 | 기대 결과 |
+| - | ------- | --------- |
+| ① | 같은 글 상세를 3번 열기 | 조회 3 |
+| ② | student1 로그인 → 내가 쓴 글 | student1 의 글만, 제목 "내가 쓴 글" |
+| ② | 로그인 안 하고 `/board/my` | 로그인 화면 |
+
+## 풀이 순서
+
+### 1단계. 조회수 증가 메서드 — PostService
+
+상세 보기 전용 `read()` 를 만든다. **찾고 → 값을 1 올리고 → 저장**한다.
+수정 때 배운 것처럼 id 가 있으니 `save()` 는 **UPDATE** 가 된다.
+
+```java
+public Post read(Long id) { // [9주차 연습문제 ①] 상세 보기 : 조회수 1 증가
+    Post post = findById(id);
+    post.setViewCount(post.getViewCount() + 1);
+    return postRepository.save(post); // id 가 있으니 UPDATE
+}
+```
+
+> `findById()` 를 그대로 두고 `read()` 를 **따로** 만든 이유 :
+> `findById()` 는 수정·삭제에서도 쓰인다. 거기서 조회수가 오르면 안 되므로 **상세 화면에서만** `read()` 를 쓴다.
+
+### 2단계. 상세 화면에서 read() 사용 — BoardController
+
+`detail()` 에서 **한 줄만** 바꾼다.
+
+```java
+@GetMapping("/{id}") // 상세 : GET /board/3 (누구나)
+public String detail(@PathVariable Long id, Model model) {
+    Post post = postService.read(id); // findById → read : 조회수 1 증가
+    model.addAttribute("post", post);
+    return "board/detail";
+}
+```
+
+**실행 결과** — 3번 글을 새로 3번 열었더니 조회가 4가 됐다.
+글을 쓴 직후 `redirect:/board/3` 으로 **상세 화면이 한 번 열렸기 때문**에 1부터 시작한 것이다. (1 + 3 = 4)
+
+![조회수](docs/images/week9-viewcount.png)
+
+### 3단계. 내가 쓴 글 메서드 — PostRepository
+
+**메서드 이름만** 규칙대로 쓰면 JPA 가 SQL 을 만든다 (4주차, 7주차 검색과 같은 원리).
+
+```java
+// [9주차 연습문제 ②] 내가 쓴 글 (최신 글이 위로)
+List<Post> findByAuthor_UsernameOrderByIdDesc(String username);
+```
+
+| 이름 조각 | 뜻 | SQL 로 바꾸면 |
+| --------- | -- | ------------- |
+| `findBy` | 찾아라 | `SELECT … FROM posts` |
+| `Author_Username` | 작성자(`author`)의 `username` 으로 | `JOIN member … WHERE m.username = ?` |
+| `OrderByIdDesc` | 번호 큰 순서(최신 글)로 | `ORDER BY p.id DESC` |
+
+> `_` (밑줄) 은 **객체 안으로 한 단계 들어간다**는 표시다. `author` → `username`.
+> `@ManyToOne` 으로 연결해 두었기 때문에 가능한 이름이다.
+
+`PostService` 에 감싸는 메서드를 추가한다.
+
+```java
+public List<Post> findMyPosts(String username) { // [9주차 연습문제 ②] 내가 쓴 글
+    return postRepository.findByAuthor_UsernameOrderByIdDesc(username);
+}
+```
+
+### 4단계. /board/my 주소 — BoardController
+
+**목록 화면(`board/list`)을 그대로 재사용**하고, `listTitle` 만 추가로 넘긴다.
+
+```java
+@GetMapping("/my") // [9주차 연습문제 ②] 내가 쓴 글 : GET /board/my (로그인 필요)
+public String myPosts(Principal principal, Model model) {
+    List<Post> posts = postService.findMyPosts(principal.getName());
+    model.addAttribute("posts", posts);
+    model.addAttribute("listTitle", "내가 쓴 글"); // 목록 화면 재사용, 제목만 변경
+    return "board/list";
+}
+```
+
+목록 화면에서는 `listTitle` 이 **있으면 그 값, 없으면 "게시판"** 을 보여 준다.
+
+```html
+<h1><span th:text="${listTitle != null ? listTitle : '게시판'}">게시판</span></h1>
+```
+
+> `SecurityConfig` 는 **고치지 않아도 된다.**
+> `/board/{id:\d+}` 는 숫자만 허용하므로 `/board/my` 는 `anyRequest().authenticated()` 에 걸려 **자동으로 로그인 필요**가 된다.
+
+**실행 결과** — student1 로 로그인 → 내가 쓴 글
+
+![내가 쓴 글](docs/images/week9-my-posts.png)
+
+## 결과 정리
+
+| # | 하는 일 | 기대 결과 | 확인 |
+| - | ------- | --------- | ---- |
+| ① | 같은 글 상세를 3번 열기 | 조회 숫자 3 증가 | ✅ |
+| ② | student1 로그인 → 내가 쓴 글 | student1 의 글만, 제목 "내가 쓴 글" | ✅ |
+| ② | 로그인 안 하고 `/board/my` | 로그인 화면 | ✅ |
+
+### 게시판 주소 전체
+
+| 메서드 | 주소 | 권한 | 하는 일 |
+| ------ | ---- | ---- | ------- |
+| GET | `/board` | 누구나 | 목록 |
+| GET | `/board/{id}` | 누구나 | 상세 (+ 조회수 1 증가) |
+| GET | `/board/my` | 로그인 | 내가 쓴 글 |
+| GET · POST | `/board/write` | 로그인 | 글쓰기 화면 · 처리 |
+| GET · POST | `/board/{id}/edit` | **본인만** | 수정 화면 · 처리 |
+| POST | `/board/{id}/delete` | **본인 또는 관리자** | 삭제 |
+
+### 추가 · 수정한 파일
+
+| 구분 | 파일 | 핵심 |
+| ---- | ---- | ---- |
+| 수업 | `model/domain/Post.java` | `@ManyToOne` 작성자, `viewCount` |
+| 수업 | `model/dto/PostForm.java` | 제목·내용만 받는다 |
+| 수업 | `model/repository/PostRepository.java` | `JpaRepository<Post, Long>` |
+| 수업 | `model/service/PostService.java` | CRUD + `checkWriter()` · `isAdmin()` |
+| 수업 | `controller/BoardController.java` | `/board` 화면 컨트롤러 |
+| 수업 | `config/SecurityConfig.java` | `/board`, `/board/{id:\d+}` permitAll |
+| 수업 | `templates/board/*`, `error/404.html`, `css/board.css`, `index.html` | 게시판 화면 + 메뉴 |
+| ① 조회수 | `PostService.read()`, `BoardController.detail()` | 상세에서만 1 증가 |
+| ② 내가 쓴 글 | `PostRepository.findByAuthor_UsernameOrderByIdDesc` | 이름만으로 JOIN + 정렬 |
+| ② 내가 쓴 글 | `BoardController.myPosts()` | 목록 화면 재사용 + `listTitle` |
+
+이 과제로 확인한 것은 **조회수처럼 값만 바꾸는 것도 `save()` 의 UPDATE 로 처리된다는 점**,
+그리고 **`@ManyToOne` 으로 연결해 두면 메서드 이름(`Author_Username`)만으로 작성자 기준 검색이 된다는 점**이다.
