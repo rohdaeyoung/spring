@@ -4,6 +4,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
@@ -31,8 +33,25 @@ public class PostService {
         return postRepository.findAll(Sort.by(Sort.Direction.DESC, "id"));
     }
 
-    public List<Post> findMyPosts(String username) { // [9주차 연습문제 ②] 내가 쓴 글
-        return postRepository.findByAuthor_UsernameOrderByIdDesc(username);
+    public static final int PAGE_SIZE = 10; // 한 페이지에 보여 줄 글 수
+
+    // [10주차] 단계 1·2 : 페이지 목록 + 검색 (검색어가 없으면 전체)
+    // [10주차 연습문제 ②] type = "writer" 면 작성자 이름으로 검색
+    public Page<Post> findPage(String type, String keyword, int page) {
+        PageRequest pageable = PageRequest.of(Math.max(page, 0), PAGE_SIZE, Sort.by(Sort.Direction.DESC, "id"));
+        if (keyword == null || keyword.isBlank()) { // 앞이 true면 뒤를 실행하지 않음
+            return postRepository.findAll(pageable);
+        }
+        if ("writer".equals(type)) {
+            return postRepository.searchByWriter(keyword.trim(), pageable);
+        }
+        return postRepository.search(keyword.trim(), pageable); // 검색 결과도 10개씩
+    }
+
+    // [9주차 연습문제 ② → 10주차 연습문제 ①] 내가 쓴 글 : 10개씩, 최신 글이 위로
+    public Page<Post> findMyPage(String username, int page) {
+        PageRequest pageable = PageRequest.of(Math.max(page, 0), PAGE_SIZE, Sort.by(Sort.Direction.DESC, "id"));
+        return postRepository.findByAuthor_Username(username, pageable);
     }
 
     public Post write(PostForm form, String username) { // 글쓰기 (작성자 = 로그인한 회원)

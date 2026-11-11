@@ -1,4 +1,4 @@
-/* [9주차] 게시판 디자인 : 관리자 화면(admin/members.html)과 같은 톤 */
+/* [9주차 제공] 게시판 화면 공통 스타일 (6주차 관리자 화면과 같은 모양) */
 body { background: #f4f6fb; }
 .board-header {
     background: linear-gradient(135deg, var(--primary-color) 0%, #3d4580 100%);
@@ -6,8 +6,8 @@ body { background: #f4f6fb; }
     padding: 28px 0 88px;
 }
 .board-header h1 { color: var(--white-color); font-size: var(--h3-font-size); margin: 0; }
-.board-header a { color: rgba(255, 255, 255, .85); }
-.board-header a:hover { color: var(--white-color); }
+.board-header a:not(.btn) { color: rgba(255, 255, 255, .85); }
+.board-header a:not(.btn):hover { color: var(--white-color); }
 .board-body { margin-top: -64px; padding-bottom: 48px; }
 .board-card {
     background: var(--white-color);
@@ -15,14 +15,23 @@ body { background: #f4f6fb; }
     box-shadow: 0 .5rem 2rem rgba(0, 0, 0, .08);
     padding: 24px;
 }
-.table th { color: var(--p-color); font-weight: var(--font-weight-medium); font-size: var(--copyright-font-size); white-space: nowrap; }
-.table td { vertical-align: middle; }
-.post-title-link { color: var(--dark-color); font-weight: var(--font-weight-medium); }
-.post-title-link:hover { color: var(--secondary-color); }
-.post-meta { color: var(--p-color); font-size: var(--copyright-font-size); }
-.post-meta span + span::before { content: "·"; margin: 0 8px; color: #c0c4d0; }
+.btn-sm-custom { padding: 5px 14px; font-size: 14px; border-radius: var(--border-radius-small); }
+.board-table th { color: var(--p-color); font-weight: var(--font-weight-medium); font-size: var(--copyright-font-size); white-space: nowrap; text-align: center; }
+.board-table td { vertical-align: middle; text-align: center; }
+.board-table td.text-start { text-align: left; }
+.board-title { color: var(--dark-color); font-weight: var(--font-weight-medium); }
+.board-title:hover { color: var(--primary-color); }
+.edited-badge { font-size: 11px; background: #eef2ff; color: #3d4580; padding: 2px 7px; border-radius: 10px; margin-left: 6px; }
+.post-meta { color: var(--p-color); font-size: 14px; }
 .post-content { white-space: pre-wrap; line-height: 1.8; min-height: 160px; color: var(--dark-color); }
-.me-badge { font-size: 11px; background: var(--primary-color); color: var(--white-color); padding: 2px 8px; border-radius: 10px; }
-.btn-sm-custom { padding: 6px 14px; font-size: 14px; border-radius: var(--border-radius-small); }
-.custom-btn { border: 0; }
-.empty-row { color: var(--p-color); text-align: center; padding: 48px 0 !important; }
+.board-card .form-control { border-radius: var(--border-radius-small); padding: 10px 14px; }
+/* [10주차 추가] 페이지 번호 · 검색 · 댓글 */
+.pagination .page-link { color: var(--primary-color); }
+.pagination .page-item.active .page-link { background: var(--primary-color); border-color: var(--primary-color); color: #fff; }
+.board-search .form-select { width: auto; }
+.board-search .form-control { width: 200px; }
+.search-info { background: #eef2ff; color: #3d4580; border-radius: var(--border-radius-small); padding: 8px 14px; font-size: 14px; }
+.comment-count { color: var(--primary-color); font-size: 13px; font-weight: var(--font-weight-medium); margin-left: 4px; }
+.comment-list { list-style: none; padding: 0; margin: 0; }
+.comment-item { border-bottom: 1px solid #edf0f5; padding: 12px 0; }
+.comment-content { white-space: pre-wrap; margin-top: 4px; color: var(--dark-color); }

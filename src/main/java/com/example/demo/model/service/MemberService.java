@@ -12,7 +12,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import com.example.demo.model.domain.Member;
 import com.example.demo.model.dto.MemberForm;
+import com.example.demo.model.repository.CommentRepository;
 import com.example.demo.model.repository.MemberRepository;
+import com.example.demo.model.repository.PostRepository;
 
 @Service // 서비스 등록
 public class MemberService implements UserDetailsService { // 로그인을 위한 인터페이스 제공
@@ -26,6 +28,10 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
 
     @Autowired // SecurityConfig 에 등록한 BCryptPasswordEncoder 주입
     private PasswordEncoder passwordEncoder;
+    @Autowired // [10주차] 단계 6 : 글·댓글이 있는 회원인지 확인
+    private PostRepository postRepository;
+    @Autowired
+    private CommentRepository commentRepository;
 
     public Member signup(MemberForm form) { // 회원가입
         // [7주차] JSON 요청에는 HTML 의 required 검사가 없다 → 서버에서 직접 검사
@@ -102,6 +108,10 @@ public class MemberService implements UserDetailsService { // 로그인을 위�
         Member member = memberRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
         checkNotSelf(member); // 6주차 연습문제 ① : 관리자 본인 보호
+        // [10주차] 단계 6 : 글·댓글이 있는 회원은 DB(외래 키)가 거부하기 전에 서비스가 먼저 막는다
+        if (postRepository.existsByAuthor(member) || commentRepository.existsByAuthor(member)) {
+            throw new IllegalArgumentException("작성한 글이나 댓글이 있는 회원은 삭제할 수 없습니다.");
+        }
         memberRepository.delete(member); // DELETE
     }
 

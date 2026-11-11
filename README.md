@@ -4310,3 +4310,1032 @@ public String myPosts(Principal principal, Model model) {
 
 이 과제로 확인한 것은 **조회수처럼 값만 바꾸는 것도 `save()` 의 UPDATE 로 처리된다는 점**,
 그리고 **`@ManyToOne` 으로 연결해 두면 메서드 이름(`Author_Username`)만으로 작성자 기준 검색이 된다는 점**이다.
+
+---
+
+# 10주차 수업 내용
+
+10주차는 **지난주 게시판에 기능 3개(페이징 · 검색 · 댓글)를 더하는 것**이 목표다.
+기말 범위는 9주차 게시판을 기준으로 이렇게 기능을 넓혀 간다.
+
+| 주차 | 게시판에 더해지는 것 |
+| ---- | -------------------- |
+| 9주차 | 글쓰기·수정·삭제, 작성자, 본인 확인 |
+| **10주차 (오늘)** | **페이징, 검색, 댓글** |
+| 11주차 | 특강·스터디 모집글(정원) + 포스터 이미지 첨부 + 신청 바구니 |
+| 12~14주차 | 실시간 알림, 선착순 신청, 메일·만료 |
+
+## 1. 웹 트렌드 — 페이징 · 검색 · 댓글
+
+### 페이징
+
+글이 1만 개라면? 한 번에 다 보내면 **화면도 느리고 서버도 힘들다.**
+→ 필요한 만큼만 **나눠서** 보여 준다 = **페이징**
+
+| 방식 | 예 | 장점 | 단점 |
+| ---- | -- | ---- | ---- |
+| **페이지 번호 (오늘)** | 네이버 검색 결과, 게시판 | 원하는 위치로 바로 이동 | 클릭이 필요 |
+| 더보기 버튼 | 유튜브 댓글 | 간단, 흐름 유지 | 중간 위치로 이동 어려움 |
+| 무한 스크롤 | 인스타그램, 쇼츠 | 끊김 없이 계속 보기 | 끝을 알기 어렵고 다시 찾기 어려움 |
+
+### 검색
+
+글이 많아질수록 사람들은 목록보다 **검색**으로 찾는다. 규모에 따라 방법이 다르고, **검색 결과에도 페이징이 필요하다.**
+
+| 방법 | 쓰는 곳 | 장점 | 단점 |
+| ---- | ------- | ---- | ---- |
+| **`LIKE '%검색어%'` (오늘)** | 작은 게시판, 관리자 화면 | SQL 한 줄, 바로 사용 | 글이 아주 많으면 느림 |
+| 전문 검색 (FULLTEXT) | 중간 규모 게시판 | 단어 단위로 빠르게 | 한글 설정이 필요 |
+| 검색 엔진 (Elasticsearch) | 쇼핑몰, 포털, 대형 커뮤니티 | 빠르고 똑똑한 검색 | 서버를 따로 운영 |
+
+### 댓글
+
+글에 대한 대화가 일어나는 곳이다. 서비스마다 **누가 썼는지, 누가 지울 수 있는지, 글이 지워지면 댓글은?** 의 규칙이 있다.
+
+| 서비스 | 댓글 모습 | 삭제 규칙 |
+| ------ | --------- | --------- |
+| 유튜브 | 좋아요 · 고정 댓글, 답글 | 본인, 채널 주인 |
+| 에브리타임 | 익명 번호(익명1, 익명2), 대댓글 | 본인, 신고 누적 시 숨김 |
+| 네이버 뉴스 | 작성자 일부 공개, 댓글 이력 | 본인, 운영 정책 |
+| **우리 게시판 (오늘)** | 작성자 이름, 작성 시간 | **본인 또는 관리자** (9주차 규칙 그대로) |
+
+## 2. 오늘의 실습 순서
+
+```
+단계 0          단계 1        단계 2         단계 3·4          단계 5·6
+제공 화면 복사 → 페이징     →  검색       →  댓글 쓰기·삭제 →  삭제 정리
+테스트 글 105개  ⚠ 글이 너무                               ⚠ 댓글 달린 글 삭제 500
+                   많다                                     ⚠ 글 쓴 회원 삭제 500
+```
+
+## 3. 제공 화면과 컨트롤러의 약속 (단계 0)
+
+`10주차_제공코드` 폴더의 파일을 **9주차 화면 위에 덮어쓴다.** 덮어써도 지금 상태 그대로 동작하고,
+페이지 번호·댓글 영역은 **컨트롤러가 값을 넘겨줄 때** 나타난다.
+
+| 파일 | 바뀐 것 |
+| ---- | ------- |
+| `templates/board/list.html` | 페이지 번호 + 검색창 |
+| `templates/board/detail.html` | 댓글 영역 |
+| `static/css/board.css` | 페이지 번호 · 검색 · 댓글 디자인 |
+| `10주차_테스트글_105개.sql` | 실습용 글 (깃에는 올리지 않는다) |
+
+| 화면 | 컨트롤러가 넘겨줄 값 | 그러면 화면에 | 언제 |
+| ---- | -------------------- | ------------- | ---- |
+| `board/list.html` | `posts` (글 목록) | 글 목록 표 | 9주차부터 |
+| | **`page`** (페이지 정보) | 페이지 번호가 나타남 | 단계 1 |
+| | **`keyword`** (검색어) | 검색창 유지 · 검색 결과 안내 | 단계 2 |
+| `board/detail.html` | `post` (글 1개) | 글 내용 | 9주차부터 |
+| | **`comments`** (댓글 목록) | 댓글 영역이 나타남 | 단계 3 |
+
+### 글이 많아지면? — 테스트 글 105개
+
+MySQL 확장에서 `10주차_테스트글_105개.sql` 을 실행한다.
+
+- 관리자 이름으로 **"테스트 글 1 ~ 105"** 가 생긴다 (직접 쓴 글 3개와 합쳐 **108개**)
+- **8번째 글마다** 내용에 "스프링 스터디 모집" (검색 실습용, 13개)
+
+```sql
+-- 재귀 CTE 로 1~105 숫자를 만들어 한 번에 INSERT
+INSERT INTO posts (title, content, member_id, created_at, view_count)
+WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 105)
+SELECT CONCAT('테스트 글 ', n),
+       CONCAT('페이징 확인용 ', n, '번째 글입니다.', IF(n % 8 = 0, ' 이번 주 스프링 스터디 모집 공지', '')),
+       @author, NOW() - INTERVAL (106 - n) MINUTE, 0
+FROM seq;
+```
+
+목록을 새로고침하면 **글 100개 이상이 한 화면에 쭉** 나온다. ⚠ 왜 문제일까?
+
+| 순서 | 지금 (9주차) | 바라는 모습 |
+| ---- | ------------ | ----------- |
+| DB 에서 꺼내기 | 전체 글 (`findAll`) | **10개만** |
+| 화면에 그리기 | 105줄 이상 | 10줄 + 페이지 번호 |
+| 글이 1만 개라면 | 1만 줄, 점점 느려짐 | 언제나 10줄 |
+
+→ 보는 건 위쪽 10개뿐인데 나머지는 낭비다. **10개씩 나눠서 꺼내 보자.**
+
+## 4. 페이징 개념 — Pageable 과 Page
+
+스프링이 준비해 둔 페이징 도구 두 가지
+
+- **`Pageable`** : 몇 번째 페이지, 몇 개씩, 어떤 순서로 (**요청**)
+- **`Page`** : 이번 페이지의 글 + 페이지 정보 (**결과**)
+
+`PageRequest.of(페이지, 개수, 정렬)` 로 만든다. **페이지 번호는 0 부터** (화면에는 1 부터).
+
+| 주소 | page | SQL (최신순) | 보이는 글 |
+| ---- | ---- | ------------ | --------- |
+| `/board` | 0 | `LIMIT 10 OFFSET 0` | 1~10번째 |
+| `/board?page=1` | 1 | `LIMIT 10 OFFSET 10` | 11~20번째 |
+| `/board?page=2` | 2 | `LIMIT 10 OFFSET 20` | 21~30번째 |
+
+> **OFFSET** = "앞에서 몇 개를 **건너뛸지**". OFFSET 은 `page × 10` 이다.
+
+## 5. 페이징 적용 (단계 1)
+
+### ① 서비스 — PostService
+
+`findById()` 위에 추가한다. (import : `org.springframework.data.domain.Page`, `org.springframework.data.domain.PageRequest`)
+
+```java
+public static final int PAGE_SIZE = 10; // 한 페이지에 보여 줄 글 수
+
+// [10주차] 단계 1 : 페이지 목록 (page 는 0 부터)
+public Page<Post> findPage(int page) { // 반환 타입이 Page
+    PageRequest pageable = PageRequest.of(Math.max(page, 0), PAGE_SIZE, Sort.by(Sort.Direction.DESC, "id"));
+    return postRepository.findAll(pageable); // SELECT ... ORDER BY id DESC LIMIT 10 OFFSET page*10
+}
+```
+
+| `PageRequest.of( ① , ② , ③ )` | 뜻 | 예 |
+| ----------------------------- | -- | -- |
+| ① `Math.max(page, 0)` | 몇 번째 페이지 (0부터) | `?page=-1` 같은 이상한 값 → 0 |
+| ② `PAGE_SIZE` | 한 페이지에 몇 개 | 10 |
+| ③ `Sort.by(DESC, "id")` | 정렬 순서 | id 큰 것부터 = 최신 글이 위로 |
+
+> `findAll(pageable)` 은 **`JpaRepository` 에 이미 있다** → 리포지토리는 고치지 않는다.
+
+### ② 컨트롤러 — BoardController 의 list()
+
+(import : `org.springframework.data.domain.Page`, `org.springframework.web.bind.annotation.RequestParam`)
+
+```java
+@GetMapping // 목록 : GET /board?page=0 (누구나)
+public String list(@RequestParam(defaultValue = "0") int page, Model model) {
+    Page<Post> posts = postService.findPage(page);   // 페이지 단위로 10개씩
+    model.addAttribute("posts", posts.getContent()); // 이번 페이지의 글 목록
+    model.addAttribute("page", posts);               // 페이지 정보 → 화면에 번호가 생긴다
+    return "board/list";
+}
+```
+
+**`Page` 객체가 알려 주는 것** (화면이 `page` 로 꺼내 쓴다)
+
+| Page 메서드 | 뜻 | 제공 화면에서 |
+| ----------- | -- | ------------- |
+| `getContent()` | 이번 페이지의 글 10개 | 표의 줄 (`posts`) |
+| `getNumber()` | 현재 페이지 번호 (0부터) | 파란색으로 표시 |
+| `getTotalPages()` / `getTotalElements()` | 전체 페이지 수 / 전체 글 수 | "1 / 11 페이지", "전체 108개" |
+| `isFirst()` / `isLast()` | 첫 · 마지막 페이지인가 | 이전 · 다음 버튼 막기 |
+
+### 페이징 테스트
+
+| # | 주소 | 기대 결과 | 확인 |
+| - | ---- | --------- | ---- |
+| 1 | `/board` | 글 10개 + 페이지 번호, "1 / 11 페이지" | ✅ 10개, 전체 108개 |
+| 2 | 페이지 번호 2 클릭 | 다음 글 10개, 주소 `/board?page=1` | ✅ |
+| 3 | 마지막 페이지 | 남은 글만 (예 : 8개) | ✅ 8개 |
+| 4 | `/board?page=-1` | 첫 페이지 (오류 없음) | ✅ |
+| 5 | `/board?page=999` | 빈 목록 (오류 없음) | ✅ |
+
+> **화면은 1페이지, 주소는 `page=0`** — 사람은 1부터, 컴퓨터는 0부터 센다.
+
+**첫 페이지 — 10개 + 페이지 번호 ("1 / 11 페이지")**
+
+![페이징 1페이지](docs/images/week10-page1.png)
+
+**2 를 클릭 → 주소 `/board?page=1`**
+
+![페이징 2페이지](docs/images/week10-page2.png)
+
+### 코드 돋보기 : 페이징이 보내는 SQL
+
+페이지 1장을 그릴 때 SQL 은 **2번** 나간다. (실제 터미널 로그)
+
+```
+select p1_0.id, ..., p1_0.view_count from posts p1_0 order by p1_0.id desc limit ?,?   ← ① 글 10개
+select count(p1_0.id) from posts p1_0                                                 ← ② 전체 글 수
+```
+
+- ② 는 **"1 / 11 페이지", "전체 108개"** 를 위해 필요하다 (마지막 페이지처럼 개수를 이미 알면 생략)
+- 첫 페이지(OFFSET 0)는 `limit ?` 하나만 쓰기도 한다
+- **OFFSET 의 약점** : `OFFSET 10000` = 1만 개를 세고 버린 뒤 10개 → **뒤 페이지일수록 느려진다**
+  - 큰 서비스 : "마지막으로 본 id 다음부터" (`WHERE id < 마지막id`) = **키셋 페이징(keyset pagination)**
+
+| 구분 | **Page (오늘)** | Slice |
+| ---- | --------------- | ----- |
+| count SQL | 있음 | 없음 |
+| 알 수 있는 것 | 전체 개수, 전체 페이지 수 | 다음 페이지가 있는지만 |
+| 어울리는 화면 | **페이지 번호** | 더보기, 무한 스크롤 |
+
+## 6. 검색 개념 — JPQL
+
+"스터디" 가 들어간 글을 찾으려면?
+
+- SQL : `WHERE title LIKE '%스터디%' OR content LIKE '%스터디%'`
+- `%` = 0개 이상의 아무 문자 → 앞뒤에 무엇이 와도 된다
+
+메서드 이름으로 만들면 `findByTitleContainingOrContentContaining(...)` — **너무 길어 읽기 어렵다.**
+그래서 **JPQL** 로 쿼리를 직접 쓴다 (`@Query`). SQL 과 거의 같지만 **엔티티와 필드 이름**으로 쓰고,
+JPA 가 MySQL 용 SQL 로 바꿔서 보낸다 (PostgreSQL 등에도 호환).
+
+| 방법 | 쓰는 모습 | 대상 | 특징 |
+| ---- | --------- | ---- | ---- |
+| SQL | `SELECT * FROM posts WHERE title LIKE ...` | 테이블 · 컬럼 | DB 에서 직접 실행 |
+| 메서드 이름 (5 · 9주차) | `findByTitleContaining(...)` | 필드 | 조건이 길면 읽기 어려움 |
+| **JPQL (오늘)** | `SELECT p FROM Post p WHERE p.title LIKE ...` | **엔티티 · 필드** | 조건이 길어도 한눈에 |
+
+## 7. 검색 적용 (단계 2)
+
+### ① 리포지토리 — PostRepository
+
+(import : `Page`, `Pageable`, `org.springframework.data.jpa.repository.Query`, `org.springframework.data.repository.query.Param`)
+
+```java
+// [10주차] 단계 2 : 제목 또는 내용에 검색어가 들어간 글 (JPQL)
+@Query("SELECT p FROM Post p WHERE p.title LIKE %:keyword% OR p.content LIKE %:keyword%")
+Page<Post> search(@Param("keyword") String keyword, Pageable pageable);
+```
+
+| 조각 | 뜻 |
+| ---- | -- |
+| `Post p` | 엔티티 `Post` 를 p 라고 부른다 (테이블 이름 `posts` 가 아님) |
+| `:keyword` | 값이 들어갈 자리 — `@Param("keyword")` 와 **이름이 같아야** 한다 |
+| `%:keyword%` | 자리 앞뒤에 % → "검색어가 **들어간**" |
+| `Pageable pageable` | **맨 뒤에 두면** ORDER BY · LIMIT · count 를 스프링이 붙여 준다 |
+
+> 인터페이스라서 구현 코드가 없다. 실행할 때 **스프링이 프록시 구현체**를 만들어 준다.
+
+### ② 서비스 — findPage() 에 keyword 추가
+
+```java
+// [10주차] 단계 2 : 페이지 목록 + 검색 (검색어가 없으면 전체)
+public Page<Post> findPage(String keyword, int page) {
+    PageRequest pageable = PageRequest.of(Math.max(page, 0), PAGE_SIZE, Sort.by(Sort.Direction.DESC, "id"));
+    if (keyword == null || keyword.isBlank()) { // 앞이 true면 뒤를 실행하지 않음
+        return postRepository.findAll(pageable);
+    }
+    return postRepository.search(keyword.trim(), pageable); // 검색 결과도 10개씩
+}
+```
+
+| keyword | 실행 | 결과 |
+| ------- | ---- | ---- |
+| `null` (주소에 없음) | `findAll(pageable)` | 전체 글 |
+| `""`, `"   "` (빈칸 검색) | `findAll(pageable)` | 전체 글 (`isBlank()` = 비었거나 공백뿐) |
+| `" 스터디 "` | `search("스터디", pageable)` | `trim()` 으로 앞뒤 공백 제거 후 검색 |
+
+> **같은 `pageable` 을 넘긴다** → 검색 결과도 10개씩, 최신순.
+> 매개변수를 바꿨으므로 컨트롤러에서 컴파일 오류가 난다 → 계속 수정한다.
+
+### ③ 컨트롤러 — list() 에 keyword 추가
+
+```java
+@GetMapping // 목록 : GET /board?page=0&keyword=스프링 (누구나)
+public String list(@RequestParam(defaultValue = "0") int page,
+                   @RequestParam(required = false) String keyword, Model model) {
+    Page<Post> posts = postService.findPage(keyword, page);
+    model.addAttribute("posts", posts.getContent());
+    model.addAttribute("page", posts);
+    model.addAttribute("keyword", keyword); // 검색창에 검색어 유지, 페이지 링크에도 붙인다
+    return "board/list";
+}
+```
+
+**`@RequestParam` 의 세 가지 모습**
+
+| 쓰는 모습 | 주소에 값이 없으면 | 어디에 |
+| --------- | ------------------ | ------ |
+| `@RequestParam(defaultValue = "0") int page` | `"0"` 을 대신 넣는다 | 페이지 번호 (**int 는 null 이 될 수 없음**) |
+| `@RequestParam(required = false) String keyword` | `null` (오류 아님) | 검색어 (없어도 되는 값) |
+| `@RequestParam String keyword` (아무것도 안 씀) | **400 오류** | 꼭 필요한 값 (기본이 `required = true`) |
+
+> **keyword 를 왜 다시 넘기나?** HTTP 는 **무상태(stateless)** — 앞 요청의 검색어를 기억하지 않는다.
+> 그래서 검색창에 입력한 단어를 유지하고, 페이지 링크에도 붙인다.
+
+### 검색 테스트
+
+| # | 검색어 | 기대 결과 | 확인 |
+| - | ------ | --------- | ---- |
+| 1 | 스터디 | 13개 이상 (테스트 글 13 + 직접 쓴 글), 2페이지 | ✅ 14개 |
+| 2 | (1번 결과에서) 2 클릭 | 검색 결과의 2페이지 (`keyword=` 유지) | ✅ 4개, `?page=1&keyword=스터디` |
+| 3 | 파이썬 | "검색 결과가 없습니다." | ✅ |
+| 4 | (빈칸) | 전체 목록 | ✅ 전체 108개 |
+| 5 | `' OR 1=1 --` | 결과 0개 (SQL 로 실행되지 않는다) | ✅ 0개 |
+
+> **검색어가 페이지 링크에 붙는 이유** : 2페이지 주소 = `/board?page=1&keyword=스터디`.
+> 검색어가 빠지면 → **전체 글의 2페이지**로 바뀌어 버린다.
+
+**"스터디" 검색 결과**
+
+![스터디 검색](docs/images/week10-search.png)
+
+**"파이썬" — 결과 없음**
+
+![검색 결과 없음](docs/images/week10-search-none.png)
+
+### 코드 돋보기 : 파라미터 바인딩 — 5번 `' OR 1=1 --` 은 왜 0개일까?
+
+검색어를 SQL 에 **이어 붙이면** SQL 인젝션이 된다.
+
+```java
+// 하면 안 되는 코드
+String sql = "SELECT * FROM posts WHERE title LIKE '%" + keyword + "%'";
+// keyword = ' OR 1=1 -- 이면
+// SELECT * FROM posts WHERE title LIKE '%' OR 1=1 -- %'   → 1=1 은 항상 참 → 모든 글
+```
+
+`@Query` 의 `:keyword` 는 **자리(`?`)만** 만든다. 실제 터미널 로그 :
+
+```
+select ... from posts p1_0 where p1_0.title like replace(?,'\\','\\\\') or p1_0.content like replace(?,'\\','\\\\') ...
+```
+
+검색어는 SQL 문장이 아니라 **값으로 따로 전달**된다 → 따옴표도 그냥 글자다.
+DB 입장에서 `' OR 1=1 --` 는 그냥 **11글자짜리 문자열 값**이다.
+
+| 구분 | 문자열 이어 붙이기 | **파라미터 바인딩 (오늘)** |
+| ---- | ------------------ | -------------------------- |
+| SQL 모양 | 검색어에 따라 바뀜 | 항상 같음 (`like ?`) |
+| `' OR 1=1 --` | SQL 문법으로 실행 → 전체 글 노출 | 그냥 글자 → 0개 |
+| 따옴표 처리 | 개발자가 직접 | DB 드라이버가 알아서 |
+
+![SQL 인젝션 시도 → 0개](docs/images/week10-search-injection.png)
+
+## 8. 글과 댓글
+
+댓글은 **어느 글에, 누가** 썼는지 알아야 한다. 댓글 기준으로 **둘 다 N : 1** 이다.
+
+- 글 1 : 댓글 N → `@ManyToOne Post post`
+- 회원 1 : 댓글 N → `@ManyToOne Member author`
+- `comments` 테이블(N쪽)에 **외래 키 2개** : `post_id → posts.id`, `member_id → member.id`
+- 주소도 "글 아래의 댓글" 모양 : `POST /board/3/comments` = 3번 글에 댓글 쓰기
+
+| 구분 | 글 (Post, 9주차) | 댓글 (Comment, 오늘) |
+| ---- | ---------------- | -------------------- |
+| 외래 키 | `member_id` (작성자) | **`post_id` (어느 글) + `member_id` (작성자)** |
+| 화면 | 목록 · 상세 · 글쓰기 화면 따로 | **글 상세 화면 안에** |
+| 쓰기 주소 | `POST /board/write` | `POST /board/3/comments` |
+| 삭제 규칙 | 본인 또는 관리자 | 본인 또는 관리자 (같음) |
+
+## 9. 댓글 엔티티 — Comment.java (단계 3)
+
+`model/domain` 에 `Comment.java` 를 만든다.
+
+```java
+@Entity // 댓글 엔티티 : comments 테이블
+@Table(name = "comments")
+@Data
+public class Comment {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    @Column(nullable = false, length = 500) // 댓글 내용 : 필수, 500자까지
+    private String content;
+    @ManyToOne(fetch = FetchType.LAZY) // 어느 글의 댓글인지 (글 1 : 댓글 N)
+    @JoinColumn(name = "post_id", nullable = false) // 외래 키 → posts.id
+    private Post post;
+    @ManyToOne(fetch = FetchType.LAZY) // 댓글 작성자 (9주차 글 작성자와 같은 방법)
+    @JoinColumn(name = "member_id", nullable = false) // 외래 키 → member.id
+    private Member author;
+    @Column(nullable = false) // 작성 시간
+    private LocalDateTime createdAt;
+}
+```
+
+| 어노테이션 | 뜻 | 9주차 Post |
+| ---------- | -- | ---------- |
+| `@Entity` + `@Table(name = "comments")` | 이 클래스 = comments 테이블 | posts |
+| `@Id` + `@GeneratedValue(IDENTITY)` | 번호 자동 증가 (1, 2, 3 ...) | 같음 |
+| `@Column(nullable = false, length = 500)` | 필수, 최대 500자 → `varchar(500) not null` | 제목 100자 |
+
+**재시작 → 터미널에서 테이블 생성 확인 (실제 로그)**
+
+```
+create table comments (id bigint not null auto_increment, content varchar(500) not null,
+       created_at datetime(6) not null, member_id bigint not null, post_id bigint not null, primary key (id))
+alter table comments add constraint ... foreign key (member_id) references member (id)   ← 누가
+alter table comments add constraint ... foreign key (post_id) references posts (id)      ← 어느 글
+```
+
+### 코드 돋보기 : 지연 로딩 (LAZY)
+
+`@ManyToOne(fetch = FetchType.LAZY)` → 댓글을 꺼낼 때 **글 · 작성자는 아직 꺼내지 않는다.**
+그 전까지 **빈 껍데기 프록시**가 자리를 지키고, **쓰는 순간** SQL 이 나간다.
+
+```
+select ... from posts where id=?                 ← 글
+select ... from comments where post_id=?         ← 댓글 목록
+select ... from member where id=?                ← 이름을 쓸 때
+```
+
+| 구분 | **지연 로딩 LAZY (오늘)** | 즉시 로딩 EAGER |
+| ---- | ------------------------- | --------------- |
+| 언제 꺼내나 | 쓸 때 | 댓글과 함께 바로 |
+| 기본값 | `@OneToMany` | **`@ManyToOne`** → 그래서 직접 LAZY 로 바꾼다 |
+| 장점 / 단점 | 안 쓰는 데이터는 안 꺼냄 / 쓸 때마다 SQL (→ N+1) | 코드가 단순 / 안 쓰는 글 · 회원까지 매번 조회 |
+
+## 10. 댓글 리포지토리 · 서비스 · 컨트롤러 (단계 3)
+
+### CommentRepository
+
+```java
+@Repository // 댓글 리포지토리
+public interface CommentRepository extends JpaRepository<Comment, Long> {
+    List<Comment> findByPostOrderByIdAsc(Post post); // 이 글의 댓글 (오래된 순)
+}
+```
+
+| 이름 조각 | 뜻 | SQL (실제 로그) |
+| --------- | -- | --------------- |
+| `findBy` | 찾는다 | `select ... from comments` |
+| `Post` | post 필드가 같은 (**객체를 넘기면 id 로 비교**) | `where post_id=?` |
+| `OrderByIdAsc` | id 오름차순 = **오래된 댓글이 위** | `order by id` |
+
+### CommentService
+
+필드 3개 — `commentRepository`(댓글 저장·조회·삭제), `memberRepository`(작성자 찾기),
+**`postService`(9주차, 글 찾기 — 없으면 404 처리까지 재사용)**
+
+```java
+@Service // 댓글 서비스
+public class CommentService {
+    @Autowired
+    private CommentRepository commentRepository;
+    @Autowired
+    private MemberRepository memberRepository;
+    @Autowired
+    private PostService postService; // 글 찾기는 9주차 PostService 를 그대로 쓴다
+
+    public List<Comment> findByPost(Post post) { // 이 글의 댓글 목록
+        return commentRepository.findByPostOrderByIdAsc(post);
+    }
+
+    public Comment write(Long postId, String content, String username) { // 댓글 쓰기
+        if (content == null || content.isBlank() || content.length() > 500) {   // ① 검사
+            throw new IllegalArgumentException("댓글은 1~500자로 입력하세요.");
+        }
+        Post post = postService.findById(postId); // 없는 글이면 404            // ② 찾기
+        Member author = memberRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
+        Comment comment = new Comment();
+        comment.setContent(content.trim());
+        comment.setPost(post);     // 어느 글의 댓글인지
+        comment.setAuthor(author); // 작성자는 서버가 정한다
+        comment.setCreatedAt(LocalDateTime.now());
+        return commentRepository.save(comment); // INSERT                        // ③ 저장
+    }
+}
+```
+
+> 작성자는 화면에서 받지 않는다 (남의 이름 쓰기 방지). 로그인 정보에서 꺼낸 **username 문자열**로 받는다.
+
+### CommentController
+
+```java
+@Controller // 댓글 컨트롤러 : 처리 후 글 상세 화면으로 돌아간다
+@RequestMapping("/board/{postId}/comments") // 댓글은 글 아래에 있다 → 주소도 글 아래
+public class CommentController {
+    @Autowired
+    CommentService commentService;
+
+    @PostMapping // 댓글 쓰기 : POST /board/3/comments (로그인 필요)
+    public String write(@PathVariable Long postId,
+                        @RequestParam(defaultValue = "") String content,
+                        Principal principal) {
+        try {
+            commentService.write(postId, content, principal.getName());
+            return "redirect:/board/" + postId + "#comments"; // 댓글 위치로
+        } catch (IllegalArgumentException e) { // 빈 댓글, 500자 초과
+            return "redirect:/board/" + postId + "?commentError#comments";
+        }
+    }
+}
+```
+
+| 클래스 위 `@RequestMapping` | + 메서드 위 | = 최종 주소 | 언제 |
+| --------------------------- | ----------- | ----------- | ---- |
+| `/board/{postId}/comments` | `@PostMapping` | `POST /board/3/comments` (댓글 쓰기) | 단계 3 |
+| `/board/{postId}/comments` | `@PostMapping("/{id}/delete")` | `POST /board/3/comments/7/delete` (삭제) | 단계 4 |
+
+| 값을 받는 방법 | 언제 | 오늘의 예 |
+| -------------- | ---- | --------- |
+| DTO (5 · 9주차) | 값이 여러 개 | `PostForm postForm` (제목 + 내용) |
+| **`@RequestParam`** | 값이 1~2개 | `@RequestParam String content` (댓글 내용) |
+| `@PathVariable` (6 · 7주차) | 주소 안의 값 | `/board/{postId}/comments` 의 postId |
+
+### 상세 화면에 댓글 넘기기 — BoardController
+
+```java
+@Autowired // ① 필드 추가 (postService 아래)
+CommentService commentService;
+
+@GetMapping("/{id}") // 상세 : GET /board/3 (누구나)
+public String detail(@PathVariable Long id, Model model) {
+    Post post = postService.read(id); // (9주차 연습문제 : 조회수 증가)
+    model.addAttribute("post", post);
+    model.addAttribute("comments", commentService.findByPost(post)); // ② 댓글 목록 → 화면에 댓글 영역
+    return "board/detail";
+}
+```
+
+> `comments` 를 넘기는 순간 → 제공 화면(`detail.html`)에 **댓글 영역이 나타난다** (3장의 약속).
+
+### 코드 돋보기 : POST 다음엔 redirect (PRG 패턴)
+
+댓글 등록 후 `return "board/detail"` 로 화면을 바로 돌려주면? **F5 → "양식 다시 제출" → 댓글 2번 등록.**
+그래서 **POST → Redirect → GET** (PRG). 새로고침해도 **조회만** 다시 한다.
+
+| 구분 | `return "board/form"` (9주차 수정 실패) | `return "redirect:/board/3"` (댓글) |
+| ---- | --------------------------------------- | ----------------------------------- |
+| 브라우저 요청 | 1번 | 2번 (POST → 302 → GET) |
+| 새로고침하면 | POST 다시 (중복 위험) | **GET 만 다시** |
+| model 값 | 화면에 그대로 전달 | 사라진다 → **주소 파라미터로** (`?commentError`) |
+| 쓰는 때 | 입력값을 살려 다시 보여 줄 때 | 처리가 끝난 뒤 |
+
+- `#comments` = 페이지 안의 위치 (서버로 가지 않는다) → 댓글 위치로 스크롤
+- HTML 폼은 GET · POST 만 → 삭제도 `POST .../delete`
+
+### 댓글 테스트
+
+| # | 계정 | 하는 일 | 기대 결과 | 확인 |
+| - | ---- | ------- | --------- | ---- |
+| 1 | 로그인 안 함 | 글 상세 열기 | 댓글 영역 + "로그인하면 댓글을 쓸 수 있습니다." | ✅ |
+| 2 | student3 | student1 의 글에 댓글 | 댓글 위치로 이동, 작성자 = 김학생 | ✅ `/board/1#comments` |
+| 3 | student1 | 같은 글에 답글 | 오래된 댓글이 위로 | ✅ |
+| 4 | student1 | 빈칸으로 등록 | "댓글은 1~500자로 입력하세요." | ✅ |
+| 5 | admin | 같은 글에 댓글 | 작성자 = 관리자, 댓글 수 3 | ✅ |
+| 6 | admin | 등록 직후 F5 | 댓글이 늘지 않는다 (PRG) | ✅ 3 → 3 |
+
+**로그인 안 함 — 댓글 영역 + 안내 문구**
+
+![댓글 로그인 안내](docs/images/week10-comment-anon.png)
+
+**빈 댓글 → 안내 문구**
+
+![빈 댓글 오류](docs/images/week10-comment-error.png)
+
+## 11. 댓글 삭제 (단계 4)
+
+### ① 서비스 — CommentService 에 추가
+
+(import : `HttpStatus`, `ResponseStatusException`, `AccessDeniedException`, `Authentication`, `SecurityContextHolder`)
+
+```java
+public void delete(Long id) { // 댓글 삭제 (본인 또는 관리자)
+    Comment comment = commentRepository.findById(id)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "댓글이 존재하지 않습니다."));
+    if (!isAdmin()) checkWriter(comment);
+    commentRepository.delete(comment); // DELETE
+}
+
+private void checkWriter(Comment comment) { // 로그인한 사람이 댓글 작성자인지 → 아니면 403
+    String loginUsername = SecurityContextHolder.getContext().getAuthentication().getName();
+    if (!comment.getAuthor().getUsername().equals(loginUsername)) {
+        throw new AccessDeniedException("본인이 쓴 댓글만 삭제할 수 있습니다.");
+    }
+}
+
+private boolean isAdmin() { // 로그인한 사람이 관리자인지
+    Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+    return auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+}
+```
+
+| 상황 | 결과 | 어떻게 |
+| ---- | ---- | ------ |
+| 없는 댓글 | 404 | `ResponseStatusException` |
+| 관리자 | 검사 건너뜀 | `isAdmin()` — 역할 목록 중 `ROLE_ADMIN` 이 **하나라도 있으면**(`anyMatch`) true |
+| 남의 댓글 | 403 | `AccessDeniedException` |
+
+### ② 컨트롤러 — CommentController 에 추가
+
+```java
+@PostMapping("/{id}/delete") // 댓글 삭제 : POST /board/3/comments/7/delete
+public String delete(@PathVariable Long postId, @PathVariable Long id) {
+    commentService.delete(id);
+    return "redirect:/board/" + postId + "?commentDeleted#comments";
+}
+```
+
+| 구분 | 글 삭제 (9주차) | 댓글 삭제 (오늘) |
+| ---- | --------------- | ---------------- |
+| 확인 | `checkWriter(post)` | `checkWriter(comment)` |
+| 관리자 | 누구 글이든 삭제 | 누구 댓글이든 삭제 |
+| 글 주인이 남의 댓글을? | - | **삭제 불가** (댓글 주인이 아님) |
+
+### 댓글 삭제 테스트 — ⚠ 문제 발견
+
+| # | 계정 | 하는 일 | 기대 결과 |
+| - | ---- | ------- | --------- |
+| 1 | student3 | 내 댓글 보기 | 삭제 버튼 |
+| 2 | student1 | 내 글의 student3 댓글 | 삭제 버튼 없음 |
+| 3 | admin | 같은 글 보기 | 관리자 삭제 버튼 |
+| 4 | student3 | 내 댓글 삭제 | "댓글이 삭제되었습니다." |
+| 5 | student1 | 댓글 달린 내 글 삭제 | **어? 500 오류!** |
+
+**student3 — 내 댓글에만 삭제 버튼**
+
+![내 댓글 삭제 버튼](docs/images/week10-comment-mine.png)
+
+**admin — 모든 댓글에 관리자 삭제**
+
+![관리자 댓글 삭제](docs/images/week10-comment-admin.png)
+
+**student3 이 내 댓글 삭제 후**
+
+![댓글 삭제 후](docs/images/week10-comment-deleted.png)
+
+5번의 오류 메시지 : `Cannot delete or update a parent row: a foreign key constraint fails …`
+
+- `comments` 의 `post_id` 가 **이 글을 가리키고 있다**
+- 9주차에 미뤄 둔 **"글 쓴 회원 삭제 500"** 과 같은 원인이다
+
+## 12. 연관 데이터 삭제
+
+외래 키 = "이 댓글은 **있는** 글 것". 가리키는 데이터가 있으면 → **DB 가 삭제를 거부**한다 (**참조 무결성**).
+
+| 방법 | 설명 | 장점 | 단점 |
+| ---- | ---- | ---- | ---- |
+| 삭제 막기 | 연결된 데이터가 있으면 "삭제할 수 없음" | 간단, 데이터 보존 | 지우고 싶어도 못 지움 |
+| 함께 삭제 (cascade) | 글을 지울 때 댓글도 같이 | 깔끔 | 같이 지워진 것은 되돌릴 수 없음 |
+| 삭제 표시 | 지우지 않고 "삭제된 글입니다" 로 | 실제 서비스 방식 | 조회마다 걸러야 해서 복잡 |
+
+**무엇을 지우느냐에 따라 다르게 고른다.**
+
+| 지우는 것 | 연결된 것 | 오늘의 선택 | 이유 |
+| --------- | --------- | ----------- | ---- |
+| 글 | 댓글 | **함께 삭제** | 글이 없으면 댓글은 의미가 없다 |
+| 회원 | 글 · 댓글 | **삭제 막기** | 남이 볼 글, 남이 단 댓글이 사라지면 안 된다 |
+
+### 코드 돋보기 : 주인과 cascade
+
+글 ↔ 댓글을 **양쪽에서** 연결한다 (양방향).
+
+- `Comment.post` : **외래 키를 가진 쪽 = 주인** → DB 에 저장
+- `Post.comments` : 읽기만 → `mappedBy = "post"`
+- 댓글 저장은 지금처럼 **주인 쪽에서** (`comment.setPost(post)`)
+- `@Data` 를 양쪽에 쓰면 `toString` 이 끝없이 호출된다 → 한쪽에 `@ToString.Exclude`
+
+| "함께 삭제" 를 거는 방법 | 어디에 | 동작 |
+| ------------------------ | ------ | ---- |
+| **`cascade = CascadeType.REMOVE` (오늘)** | 엔티티 (자바) | 글을 지우면 JPA 가 댓글 DELETE 를 **먼저** 보냄 (로그에 보임) |
+| `cascade = CascadeType.ALL` | 엔티티 | 저장 · 삭제 등 모두 함께 |
+| `orphanRemoval = true` | 엔티티 | 글의 목록에서 빠진 댓글도 삭제 |
+| `ON DELETE CASCADE` | DB 외래 키 | DB 가 직접 지움 (JPA 는 모름) |
+
+## 13. 글 삭제 정리 (단계 5)
+
+`Post.java` 에 추가한다. (import : `java.util.ArrayList`, `java.util.List`, `lombok.EqualsAndHashCode`, `lombok.ToString`)
+
+```java
+// 글 1개 → 댓글 여러 개 (1 : N). 글을 지우면 댓글도 함께 지운다
+@OneToMany(mappedBy = "post", cascade = CascadeType.REMOVE) // 외래 키는 Comment.post 가 관리
+@ToString.Exclude @EqualsAndHashCode.Exclude // 글 → 댓글 → 글 … 무한 반복 방지
+private List<Comment> comments = new ArrayList<>();
+```
+
+그다음 `list.html` 의 댓글 수 **주석을 푼다** (`<!--/*` 줄과 `*/-->` 줄 삭제). **반드시 위 코드 다음에** —
+순서가 바뀌면 `Property or field 'comments' cannot be found` 로 목록이 500 이 된다.
+
+```html
+<span th:if="${post.comments.size() > 0}" class="comment-count" th:text="|[${post.comments.size()}]|">[3]</span>
+```
+
+| 구분 | `@ManyToOne` (단계 3) | `@OneToMany` (오늘) |
+| ---- | --------------------- | ------------------- |
+| 위치 | `Comment.post` | `Post.comments` |
+| 외래 키 | 있음 (`post_id`) = **주인** | 없음 → `mappedBy` |
+| 쓰는 곳 | 댓글 저장 | 함께 삭제, 목록의 댓글 수 |
+
+### 글 삭제 테스트
+
+| # | 계정 | 하는 일 | 기대 결과 | 확인 |
+| - | ---- | ------- | --------- | ---- |
+| 1 | 로그인 안 함 | 게시판 목록 | 댓글 달린 글 옆 [댓글 수] | ✅ |
+| 2 | student1 | 댓글 달린 내 글 삭제 | "글이 삭제되었습니다." | ✅ |
+| 3 | - | DB 확인 | 그 글의 댓글도 없음 | ✅ `count(*) = 0` |
+| 4 | writer10 (새로 가입) | 아무 글에 댓글 1개 | 댓글 등록 | ✅ |
+| 5 | admin | 회원 관리에서 writer10 삭제 | **어? 이번엔 500 오류!** | (단계 6 에서 해결) |
+
+**제목 옆 댓글 수**
+
+![댓글 수](docs/images/week10-comment-count.png)
+
+2번을 할 때 터미널 로그 — **댓글을 먼저** 지우고 글을 지운다.
+
+```
+Hibernate: delete from comments where id=?   ← 댓글 먼저 (cascade)
+Hibernate: delete from comments where id=?
+Hibernate: delete from posts where id=?      ← 그다음 글
+```
+
+→ 회원은 함께 지우면 안 된다. **500 대신 안내 메시지로 막아 보자.**
+
+## 14. 회원 삭제 정리 (단계 6)
+
+### ① 리포지토리 — PostRepository, CommentRepository 에 각각 추가
+
+```java
+boolean existsByAuthor(Member author); // 이 회원이 쓴 글이 있는지   (PostRepository)
+boolean existsByAuthor(Member author); // 이 회원이 쓴 댓글이 있는지 (CommentRepository)
+```
+
+| 메서드 | 돌려주는 값 | SQL 이 하는 일 | 이럴 때 |
+| ------ | ----------- | -------------- | ------- |
+| `findByAuthor(member)` | `List<Post>` | 해당 글을 모두 꺼낸다 | 목록이 필요할 때 |
+| `countByAuthor(member)` | `long` | 개수를 끝까지 센다 | 개수가 필요할 때 |
+| **`existsByAuthor(member)`** | `boolean` | **1개만 찾으면 멈춘다** (`limit 1`) | "있나 없나" 만 궁금할 때 |
+
+실제 로그 : `select p1_0.id from posts p1_0 where p1_0.member_id=? limit ?`
+
+### ② 서비스 — MemberService
+
+```java
+@Autowired // ① 필드 추가 (passwordEncoder 아래)
+private PostRepository postRepository;
+@Autowired
+private CommentRepository commentRepository;
+
+public void deleteMember(Long id) { // 회원 삭제
+    Member member = memberRepository.findById(id)
+            .orElseThrow(() -> new IllegalArgumentException("회원이 존재하지 않습니다."));
+    checkNotSelf(member); // 6주차 연습문제 ① : 관리자 본인 보호
+    if (postRepository.existsByAuthor(member) || commentRepository.existsByAuthor(member)) {  // ② 추가
+        throw new IllegalArgumentException("작성한 글이나 댓글이 있는 회원은 삭제할 수 없습니다.");
+    }
+    memberRepository.delete(member); // DELETE
+}
+```
+
+> **검사 → 통과해야 삭제** : DB 가 거부하기 전에 서비스가 먼저 확인한다.
+
+### 회원 삭제 테스트 — writer10 다시 삭제
+
+| 호출하는 곳 | 수정 전 | 수정 후 | 확인 |
+| ----------- | ------- | ------- | ---- |
+| 회원 관리 화면 (6주차) | 500 오류 화면 | **빨간 안내 메시지** | ✅ |
+| 관리자 API (7주차) | 500 | **400 + `{"error"}`** | ✅ |
+| 글 · 댓글 없는 회원 | 삭제됨 | 삭제됨 (그대로) | — |
+
+```
+DELETE /api/admin/members/4  (admin)
+400  {"error":"작성한 글이나 댓글이 있는 회원은 삭제할 수 없습니다."}
+```
+
+![회원 삭제 막기](docs/images/week10-member-delete-block.png)
+
+**왜 500 → 400 이 되었나?** 같은 서비스를 쓰므로 **화면과 API 가 한 번에** 해결된다.
+
+| 구분 | 수정 전 | 수정 후 |
+| ---- | ------- | ------- |
+| 누가 먼저 거부? | DB (외래 키) | **서비스** (`existsByAuthor`) |
+| 예외 | DB 오류 → 스프링이 모르는 오류 | `IllegalArgumentException` |
+| 상태 코드 | 500 = 서버 잘못 | **400 = 요청 잘못** (7주차 예외 처리) |
+
+## 15. 코드 돋보기 : N+1 문제
+
+목록 1페이지를 열 때 **글마다 "댓글 수"** 를 그리면?
+
+| 무엇을 | SQL | 횟수 |
+| ------ | --- | ---- |
+| 글 10개 | `select ... from posts limit ?,?` | 1 |
+| 전체 개수 | `select count(...) from posts` | 1 |
+| **글마다 댓글 수** | `select ... from comments where post_id=?` | **10** |
+| 작성자 이름 | `select ... from member where id=?` | 1 (모두 admin) |
+
+- 글 N개 → 댓글 SQL N번 더 = **N+1**
+- 원인 : **LAZY** 인 `comments` 를 화면이 글마다 `size()` 로 불러서
+- 한 페이지 100줄이면 100번
+
+| 해결 방법 (이름만) | 생각 |
+| ------------------ | ---- |
+| fetch join | 글과 댓글을 한 번에 |
+| `@BatchSize` | `post_id IN (...)` 으로 묶어서 |
+| 댓글 수 컬럼 | 숫자를 저장해 두고 그대로 |
+
+## 16. 전체 테스트 & 오류 해결
+
+처음부터 다시 : 페이지 이동 → 검색 → 댓글 쓰기 · 삭제 → 댓글 달린 글 삭제 → 회원 삭제
+
+| 증상 | 원인 → 해결 |
+| ---- | ----------- |
+| 페이지 번호가 안 보임 | 컨트롤러에서 `page` 를 안 넘김 (단계 1) |
+| 2페이지를 누르면 같은 글 | page 는 0 부터 — `PageRequest.of(page, ...)` 확인 |
+| 검색 2페이지에서 전체 글이 나옴 | 컨트롤러에서 `keyword` 를 안 넘김 (단계 2) |
+| 서버가 안 켜짐 : `Could not resolve root entity 'posts'` | **JPQL 은 엔티티 이름** (`posts` 가 아니라 `Post`) |
+| 댓글 영역이 안 보임 | `detail()` 에서 `comments` 를 안 넘김 (단계 3) |
+| 댓글 등록 시 403 | 폼에 `th:action` 대신 `action` → CSRF (5주차) |
+| 댓글 달린 글 삭제 시 500 | `cascade = CascadeType.REMOVE` 누락 (단계 5) |
+| 목록 500 : `Property or field 'comments' cannot be found` | `@OneToMany` 를 넣기 전에 list.html 주석을 풀었다 (단계 5 순서) |
+| 회원 삭제 시 500 | `existsByAuthor` 검사 누락 (단계 6) |
+
+> 팁 : **테스트 글 SQL 은 깃에 올리지 않아도 된다.** 제공 파일로 누구나 다시 만들 수 있다.
+
+## 수업에서 확인한 것 정리
+
+| 항목 | 핵심 |
+| ---- | ---- |
+| 페이징 | `Pageable`(요청) → `Page`(결과), `PageRequest.of(페이지, 개수, 정렬)`, **0 부터** |
+| 페이징 SQL | `limit ?,?` + `count` 2번, OFFSET 은 뒤 페이지일수록 느림 |
+| Page vs Slice | count 있음(페이지 번호) vs 없음(더보기·무한 스크롤) |
+| JPQL | `@Query` 로 **엔티티·필드 이름**으로 쿼리, `:keyword` + `@Param` |
+| `@RequestParam` | `defaultValue`(int), `required = false`(없어도 됨), 기본은 필수(400) |
+| 무상태(HTTP) | 검색어를 페이지 링크에 **다시 붙여야** 검색이 이어진다 |
+| 파라미터 바인딩 | 검색어는 값으로 따로 전달 → **SQL 인젝션 방지** |
+| 댓글 | 외래 키 2개(`post_id`, `member_id`), 주소도 `/board/{postId}/comments` |
+| LAZY | 쓸 때 꺼낸다, `@ManyToOne` 기본은 EAGER → 직접 LAZY |
+| PRG | POST → Redirect → GET, 새로고침해도 중복 등록 없음 |
+| 참조 무결성 | 가리키는 데이터가 있으면 DB 가 삭제 거부 |
+| 글 → 댓글 | **함께 삭제** : `@OneToMany(mappedBy, cascade = REMOVE)` |
+| 회원 → 글·댓글 | **삭제 막기** : `existsByAuthor` → 500 이 아니라 400 |
+| N+1 | LAZY 컬렉션을 글마다 부르면 SQL N번 더 |
+
+---
+
+# 10주차 과제
+
+## 문제 — 게시판 개선하기 (내가 쓴 글 페이징 & 작성자로 검색)
+
+### ① 내가 쓴 글 페이징
+
+- 9주차 연습문제 **"내가 쓴 글"** 에도 페이징
+- `GET /board/my?page=0` → 내 글 10개씩 + 페이지 번호
+- 힌트 : 리포지토리 `findByAuthor_Username(String username, Pageable pageable)`
+- 힌트 : 컨트롤러가 `page`, **`pageUrl`(`/board/my`)** 을 넘기면 페이지 링크가 바뀐다
+
+| # | 하는 일 | 기대 결과 |
+| - | ------- | --------- |
+| 1 | admin 로그인 → 내가 쓴 글 | 10개씩, 링크가 `/board/my?page=1` |
+| 2 | 로그인 안 하고 `/board/my` | 로그인 화면 |
+
+### ② 작성자로 검색
+
+- 검색 범위 선택 : **제목+내용 / 작성자**
+- 힌트 : JPQL `p.author.name LIKE %:name%` (글 → 작성자 → 이름)
+- 힌트 : 컨트롤러가 **`type`** 을 넘기면 화면에 선택 상자가 나타난다
+
+| # | 하는 일 | 기대 결과 |
+| - | ------- | --------- |
+| 1 | 작성자 선택 + "홍길" 검색 | 홍길동의 글만 |
+| 2 | 작성자 검색 결과 2페이지 | 주소에 `type=writer` 유지 |
+
+## 풀이 순서
+
+### 1단계. 내가 쓴 글을 Page 로 — PostRepository
+
+9주차에 만든 `List` 메서드를 **Pageable 을 받는 메서드로 바꾼다.**
+**메서드 이름 조회도 마지막에 `Pageable` 만 더하면 `Page` 가 된다.**
+
+```java
+// 9주차 (전)
+List<Post> findByAuthor_UsernameOrderByIdDesc(String username);
+
+// 10주차 연습문제 ① (후) — 정렬은 Pageable 이 맡으므로 OrderByIdDesc 를 뺀다
+Page<Post> findByAuthor_Username(String username, Pageable pageable);
+```
+
+| 바뀐 것 | 이유 |
+| ------- | ---- |
+| 반환형 `List` → **`Page`** | 페이지 정보(전체 개수, 페이지 수)까지 받기 위해 |
+| `OrderByIdDesc` 삭제 | 정렬은 `PageRequest.of(..., Sort.by(DESC, "id"))` 가 한다 |
+| 매개변수 `Pageable` 추가 | `LIMIT · OFFSET · count` 를 스프링이 붙여 준다 |
+
+실제 로그 : `... where a1_0.username=? order by p1_0.id desc limit ?` + `select count(p1_0.id) ... where a1_0.username=?`
+
+### 2단계. 서비스 — findMyPage()
+
+`findPage()` 와 같은 `PageRequest` 를 만들어 넘긴다.
+
+```java
+// [9주차 연습문제 ② → 10주차 연습문제 ①] 내가 쓴 글 : 10개씩, 최신 글이 위로
+public Page<Post> findMyPage(String username, int page) {
+    PageRequest pageable = PageRequest.of(Math.max(page, 0), PAGE_SIZE, Sort.by(Sort.Direction.DESC, "id"));
+    return postRepository.findByAuthor_Username(username, pageable);
+}
+```
+
+### 3단계. 컨트롤러 — /board/my 에 page, pageUrl 넘기기
+
+```java
+@GetMapping("/my") // 내가 쓴 글 : GET /board/my?page=0 (로그인 필요)
+public String myPosts(@RequestParam(defaultValue = "0") int page, Principal principal, Model model) {
+    Page<Post> posts = postService.findMyPage(principal.getName(), page);
+    model.addAttribute("posts", posts.getContent());
+    model.addAttribute("page", posts);
+    model.addAttribute("pageUrl", "/board/my"); // 페이지 링크를 /board/my?page=… 로 바꾼다
+    model.addAttribute("listTitle", "내가 쓴 글"); // 목록 화면 재사용, 제목만 변경
+    return "board/list";
+}
+```
+
+제공 화면은 `pageUrl` 이 없으면 `/board`, 있으면 그 주소로 페이지 링크를 만든다.
+
+```html
+<nav th:with="url=${pageUrl ?: '/board'}, ...">
+    <a class="page-link" th:href="@{${url}(page=${i},keyword=${keyword},type=${type})}" th:text="${i + 1}">1</a>
+```
+
+> `?:` (엘비스 연산자) = 앞의 값이 **null 이면** 뒤의 값.
+> `pageUrl` 을 안 넘기면 내가 쓴 글 2페이지를 눌렀을 때 **전체 글의 2페이지**로 가 버린다.
+
+**실행 결과** — admin 로그인 → 내가 쓴 글 : 전체 105개, "1 / 11 페이지", 2 의 링크가 `/board/my?page=1`
+
+![내가 쓴 글 페이징](docs/images/week10-my-page.png)
+
+### 4단계. 작성자 검색 JPQL — PostRepository
+
+```java
+// [10주차 연습문제 ②] 작성자 이름으로 검색 (글 → 작성자 → 이름, posts JOIN member)
+@Query("SELECT p FROM Post p WHERE p.author.name LIKE %:name%")
+Page<Post> searchByWriter(@Param("name") String name, Pageable pageable);
+```
+
+`p.author.name` 처럼 **점(.)으로 객체를 따라가면** JPA 가 알아서 JOIN 을 붙인다. 실제 로그 :
+
+```
+select ... from posts p1_0 join member a1_0 on a1_0.id=p1_0.member_id
+       where a1_0.name like replace(?,'\\','\\\\') order by p1_0.id desc limit ?
+```
+
+| 검색 범위 | JPQL 조건 | SQL 로 바꾸면 |
+| --------- | --------- | ------------- |
+| 제목+내용 (단계 2) | `p.title LIKE ... OR p.content LIKE ...` | posts 테이블만 |
+| **작성자 (연습 ②)** | `p.author.name LIKE ...` | **posts JOIN member (자동)** |
+
+### 5단계. 서비스 — findPage() 에 type 추가
+
+```java
+// [10주차] 단계 1·2 : 페이지 목록 + 검색 (검색어가 없으면 전체)
+// [10주차 연습문제 ②] type = "writer" 면 작성자 이름으로 검색
+public Page<Post> findPage(String type, String keyword, int page) {
+    PageRequest pageable = PageRequest.of(Math.max(page, 0), PAGE_SIZE, Sort.by(Sort.Direction.DESC, "id"));
+    if (keyword == null || keyword.isBlank()) {
+        return postRepository.findAll(pageable);
+    }
+    if ("writer".equals(type)) {
+        return postRepository.searchByWriter(keyword.trim(), pageable);
+    }
+    return postRepository.search(keyword.trim(), pageable); // 검색 결과도 10개씩
+}
+```
+
+> `"writer".equals(type)` 처럼 **상수를 앞에** 쓰면 `type` 이 null 이어도 `NullPointerException` 이 나지 않는다.
+
+### 6단계. 컨트롤러 — type 받고 넘기기
+
+```java
+@GetMapping // 목록 : GET /board?page=0&keyword=스프링&type=all (누구나)
+public String list(@RequestParam(defaultValue = "0") int page,
+                   @RequestParam(required = false) String keyword,
+                   @RequestParam(defaultValue = "all") String type, Model model) {
+    Page<Post> posts = postService.findPage(type, keyword, page);
+    model.addAttribute("posts", posts.getContent()); // 이번 페이지의 글 목록
+    model.addAttribute("page", posts);               // 페이지 정보 → 화면에 번호가 생긴다
+    model.addAttribute("keyword", keyword); // 검색창에 검색어 유지, 페이지 링크에도 붙인다
+    model.addAttribute("type", type);       // [10주차 연습문제 ②] 검색 범위 선택 상자
+    return "board/list";
+}
+```
+
+- `type` 을 넘기는 순간 제공 화면에 **"제목+내용 / 작성자" 선택 상자**가 나타난다 (`th:if="${type != null}"`)
+- 페이지 링크에도 `type=${type}` 이 붙어서 **2페이지에서도 작성자 검색이 유지**된다
+
+**실행 결과** — 작성자 + "홍길" 검색 → 홍길동의 글만
+
+![작성자로 검색](docs/images/week10-search-writer.png)
+
+작성자 + "관리" 검색(105개) → 2 클릭 → 주소 `/board?page=1&keyword=관리&type=writer` (type 유지)
+
+## 결과 정리
+
+| # | 하는 일 | 기대 결과 | 확인 |
+| - | ------- | --------- | ---- |
+| ① | admin 로그인 → 내가 쓴 글 | 10개씩, 링크가 `/board/my?page=1` | ✅ 전체 105개, 1 / 11 페이지 |
+| ① | 로그인 안 하고 `/board/my` | 로그인 화면 | ✅ |
+| ② | 작성자 선택 + "홍길" 검색 | 홍길동의 글만 | ✅ |
+| ② | 작성자 검색 결과 2페이지 | 주소에 `type=writer` 유지 | ✅ |
+
+### 게시판 주소 전체 (10주차 기준)
+
+| 메서드 | 주소 | 권한 | 하는 일 |
+| ------ | ---- | ---- | ------- |
+| GET | `/board?page=&keyword=&type=` | 누구나 | 목록 + 페이징 + 검색 |
+| GET | `/board/{id}` | 누구나 | 상세 + 댓글 목록 |
+| GET | `/board/my?page=` | 로그인 | 내가 쓴 글 (페이징) |
+| GET · POST | `/board/write` | 로그인 | 글쓰기 |
+| GET · POST | `/board/{id}/edit` | 본인만 | 수정 |
+| POST | `/board/{id}/delete` | 본인 또는 관리자 | 삭제 (댓글도 함께) |
+| POST | `/board/{postId}/comments` | 로그인 | 댓글 쓰기 |
+| POST | `/board/{postId}/comments/{id}/delete` | 본인 또는 관리자 | 댓글 삭제 |
+
+### 추가 · 수정한 파일
+
+| 구분 | 파일 | 핵심 |
+| ---- | ---- | ---- |
+| 단계 0 | `templates/board/list.html`, `detail.html`, `static/css/board.css` | 제공 화면 (페이지 번호 · 검색 · 댓글) |
+| 단계 1·2 | `model/service/PostService.java` | `PAGE_SIZE`, `findPage()` |
+| 단계 1·2 | `controller/BoardController.java` | `page`, `keyword` 넘기기 |
+| 단계 2 | `model/repository/PostRepository.java` | `@Query search()` |
+| 단계 3·4 | `model/domain/Comment.java` (신규) | 외래 키 2개 |
+| 단계 3·4 | `model/repository/CommentRepository.java` (신규) | `findByPostOrderByIdAsc` |
+| 단계 3·4 | `model/service/CommentService.java` (신규) | 쓰기 · 삭제 · 본인 확인 |
+| 단계 3·4 | `controller/CommentController.java` (신규) | `/board/{postId}/comments` |
+| 단계 5 | `model/domain/Post.java` | `@OneToMany(cascade = REMOVE)` |
+| 단계 6 | `MemberService.java`, `PostRepository`, `CommentRepository` | `existsByAuthor` 로 회원 삭제 막기 |
+| ① | `PostRepository.findByAuthor_Username(…, Pageable)`, `PostService.findMyPage()`, `BoardController.myPosts()` | 내가 쓴 글 페이징 + `pageUrl` |
+| ② | `PostRepository.searchByWriter()`, `PostService.findPage(type, …)`, `BoardController.list()` | 작성자 검색 + `type` |
+
+이 과제로 확인한 것은 **메서드 이름 조회든 JPQL 이든 마지막에 `Pageable` 만 더하면 페이징이 된다는 점**,
+그리고 **`p.author.name` 처럼 객체를 따라가면 JOIN 을 직접 쓰지 않아도 된다는 점**이다.

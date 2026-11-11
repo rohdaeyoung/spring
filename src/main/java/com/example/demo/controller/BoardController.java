@@ -1,13 +1,14 @@
 package com.example.demo.controller;
 
 import java.security.Principal;
-import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 import com.example.demo.model.domain.Post;
 import com.example.demo.model.dto.PostForm;
+import com.example.demo.model.service.CommentService;
 import com.example.demo.model.service.PostService;
 
 @Controller // 게시판 화면 컨트롤러
@@ -15,18 +16,27 @@ import com.example.demo.model.service.PostService;
 public class BoardController {
     @Autowired
     PostService postService;
+    @Autowired // [10주차] 단계 3 : 상세 화면에 댓글 목록을 넘긴다
+    CommentService commentService;
 
-    @GetMapping // 목록 : GET /board (누구나)
-    public String list(Model model) {
-        List<Post> posts = postService.findAll();
-        model.addAttribute("posts", posts);
+    @GetMapping // 목록 : GET /board?page=0&keyword=스프링&type=all (누구나)
+    public String list(@RequestParam(defaultValue = "0") int page,
+                       @RequestParam(required = false) String keyword,
+                       @RequestParam(defaultValue = "all") String type, Model model) {
+        Page<Post> posts = postService.findPage(type, keyword, page);
+        model.addAttribute("posts", posts.getContent()); // 이번 페이지의 글 목록
+        model.addAttribute("page", posts);               // 페이지 정보 → 화면에 번호가 생긴다
+        model.addAttribute("keyword", keyword); // 검색창에 검색어 유지, 페이지 링크에도 붙인다
+        model.addAttribute("type", type);       // [10주차 연습문제 ②] 검색 범위 선택 상자
         return "board/list";
     }
 
-    @GetMapping("/my") // [9주차 연습문제 ②] 내가 쓴 글 : GET /board/my (로그인 필요)
-    public String myPosts(Principal principal, Model model) {
-        List<Post> posts = postService.findMyPosts(principal.getName());
-        model.addAttribute("posts", posts);
+    @GetMapping("/my") // [9주차 연습문제 ② → 10주차 연습문제 ①] 내가 쓴 글 : GET /board/my?page=0 (로그인 필요)
+    public String myPosts(@RequestParam(defaultValue = "0") int page, Principal principal, Model model) {
+        Page<Post> posts = postService.findMyPage(principal.getName(), page);
+        model.addAttribute("posts", posts.getContent());
+        model.addAttribute("page", posts);
+        model.addAttribute("pageUrl", "/board/my"); // 페이지 링크를 /board/my?page=… 로 바꾼다
         model.addAttribute("listTitle", "내가 쓴 글"); // 목록 화면 재사용, 제목만 변경
         return "board/list";
     }
@@ -51,6 +61,7 @@ public class BoardController {
     public String detail(@PathVariable Long id, Model model) {
         Post post = postService.read(id); // [9주차 연습문제 ①] findById → read : 조회수 1 증가
         model.addAttribute("post", post);
+        model.addAttribute("comments", commentService.findByPost(post)); // [10주차] 댓글 목록 → 화면에 댓글 영역
         return "board/detail";
     }
 
