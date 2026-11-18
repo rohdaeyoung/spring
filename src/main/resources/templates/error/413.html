@@ -3,9 +3,9 @@
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>413 파일이 너무 큽니다 - First Portfolio</title>
+        <title>413 파일이 너무 큼 - First Portfolio</title>
 
-        <!-- [11주차 제공] 413 에러 페이지 : 업로드 파일이 max-file-size(5MB) · 요청 전체가 max-request-size(10MB) 를 넘을 때 -->
+        <!-- [11주차 제공] 413 에러 페이지 : 업로드 크기 제한(spring.servlet.multipart.*)을 넘으면 스프링 부트가 자동으로 사용한다. -->
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
@@ -47,18 +47,20 @@
                 <div class="error-code mb-2">413</div>
                 <h4 class="mb-2">파일이 너무 큽니다</h4>
                 <p class="text-muted mb-4">
-                    포스터 이미지는 <strong>5MB</strong> 까지 올릴 수 있습니다.<br>
-                    사진 크기를 줄인 뒤 다시 글을 써 주세요.
+                    서버가 받을 수 있는 <strong>업로드 크기</strong>를 넘었습니다.<br>
+                    사진 크기를 줄이거나 다른 파일을 골라 주세요.
                 </p>
-                <div th:if="${path}" class="alert alert-light border py-2 mb-4 text-start">
-                    <i class="bi-link-45deg me-1"></i>요청 주소 : <code th:text="${path}">/board/write</code>
+
+                <!-- 요청한 주소 표시 -->
+                <div class="alert alert-light border py-2 mb-4 text-start" th:if="${path}">
+                    <div><i class="bi-link-45deg me-1"></i>요청 주소 : <code th:text="${path}">/board/write</code></div>
                 </div>
 
                 <div class="d-flex gap-2">
-                    <a th:href="@{/board/write}" class="custom-btn btn flex-fill"><i class="bi-pencil me-1"></i>다시 글쓰기</a>
+                    <a th:href="@{/board/write}" class="custom-btn btn flex-fill"><i class="bi-pencil me-1"></i>다시 쓰기</a>
                     <a th:href="@{/board}"
                        class="btn btn-outline-secondary flex-fill d-flex align-items-center justify-content-center"
-                       style="border-radius: var(--border-radius-large);"><i class="bi-list-ul me-1"></i>게시판</a>
+                       style="border-radius: var(--border-radius-large);"><i class="bi-list me-1"></i>게시판</a>
                 </div>
             </div>
         </main>

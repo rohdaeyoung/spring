@@ -5450,8 +5450,8 @@ public String list(@RequestParam(defaultValue = "0") int page,
 | `cart.html` | `GET /cart` | **`cartPosts`** (담은 모집글) | 단계 3 |
 | | | **`enrollments`** (내 신청 내역), `message` / `error` | 단계 4 |
 
-> 참고 : 이 저장소에는 11주차 제공 코드 원본 대신 **같은 디자인(9 · 10주차 화면)으로 직접 작성한 파일**이 들어 있다.
-> 컨트롤러와의 약속(위 표의 값 이름)은 수업 자료와 같다.
+> 제공 화면은 컨트롤러가 값을 넘겨줄 때만 그 영역을 보여 준다 (예 : `enrollments` 가 없으면 "내 신청 내역" 카드가 안 보인다).
+> 그래서 단계마다 덮어쓰지 않아도, 컨트롤러를 완성해 가면 화면이 하나씩 살아난다.
 
 ## 4. 게시글 → 모집글
 
@@ -5664,7 +5664,7 @@ public class WebConfig implements WebMvcConfigurer {
 
 | # | 하는 일 | 기대 결과 | 확인 |
 | - | ------- | --------- | ---- |
-| 1 | 모집글 + `포스터_스프링스터디.png` | 상세에 포스터, `uploads/` 에 UUID 이름 파일 | ✅ `uploads/38e31553-…-daeb85e721ca.png` |
+| 1 | 모집글 + `포스터_스프링스터디.png` | 상세에 포스터, `uploads/` 에 UUID 이름 파일 | ✅ `uploads/1eccecc3-…-ea2ec7e97e7.png` |
 | 2 | 로그아웃 후 같은 상세 | 포스터가 보인다 | ✅ `/uploads/…png` → 200 `image/png` |
 | 3 | `가짜이미지.png` | "이미지 파일이 아닙니다." | ✅ |
 | 4 | 휴대폰 사진 (`큰사진_3MB.jpg`) | **413 파일이 너무 큽니다** | ✅ 413 (아직 기본 1MB) |
@@ -5704,15 +5704,22 @@ spring.servlet.multipart.max-request-size=10MB
 
 - 재시작 → 휴대폰 사진(3MB) 다시 올리기 → **성공** ✅
 - 5MB 넘는 파일(`큰사진_7MB.jpg`)은 여전히 **413** ✅
-- 제공 `form.html` 은 **고르는 순간** 먼저 알려 준다 (자바스크립트 `file.size`)
+- 제공 `form.html` 은 **고르는 순간** 먼저 막는다 (자바스크립트 `file.size` → 알림창 "포스터는 5MB 까지 올릴 수 있습니다." + 선택 취소)
 
 > ⚠ 크기 제한 **`-1`(무제한) 은 금지** — 수 GB 파일로 디스크 · 메모리를 채우는 **DoS 공격**에 노출될 수 있다.
 
-**7MB 사진을 고르는 순간 — 자바스크립트 안내 (우회 가능, 안내용)**
+```javascript
+// form.html : 1차 안내 — 5MB 넘는 파일은 보내기 전에 막는다 (진짜 검사는 서버 설정 + FileStore)
+poster.addEventListener('change', () => {
+    const file = poster.files[0];
+    if (file && file.size > 5 * 1024 * 1024) {
+        alert('포스터는 5MB 까지 올릴 수 있습니다.');
+        poster.value = '';
+    }
+});
+```
 
-![크기 안내](docs/images/week11-413-warn.png)
-
-**그래도 등록하면 — 서버가 413 (`templates/error/413.html`)**
+**자바스크립트를 우회해서(개발자 도구로 이벤트 제거) 7MB 를 보내면 — 서버가 413 (`templates/error/413.html`)**
 
 ![413 화면](docs/images/week11-413.png)
 
@@ -6052,20 +6059,27 @@ public String confirm(HttpSession session, Principal principal, RedirectAttribut
 
 ### 신청 테스트 — ⚠ 일부만 신청된다
 
-재시작 → `11주차_신청테스트.sql` 실행 (A · B 정원 5, C 정원 1)
+재시작 → MySQL 확장에서 `11주차_신청테스트.sql` 실행 (A · B 정원 5, C 정원 1)
 
 ```sql
--- ① 처음 한 번 : 모집글 만들기
-SET @author = (SELECT id FROM member WHERE username = 'admin');
-INSERT INTO posts (title, content, member_id, created_at, view_count, capacity, applied_count) VALUES
-  ('[A] 스프링 부트 스터디', '정원 5명 모집글 A (신청 테스트용)', @author, NOW(), 0, 5, 0),
-  ('[B] 알고리즘 스터디',   '정원 5명 모집글 B (신청 테스트용)', @author, NOW(), 0, 5, 0),
-  ('[C] 현직자 취업 특강',  '정원 1명 모집글 C (마감 테스트용)', @author, NOW(), 0, 1, 0);
+-- ① 테스트 모집글 3개 : 관리자(admin) 이름으로 A · B (정원 5), C (정원 1)
+INSERT INTO posts (title, content, member_id, created_at, view_count, capacity, applied_count)
+SELECT t.title, t.content, m.id, NOW(), 0, t.capacity, 0
+FROM member m
+JOIN (
+    SELECT '[테스트] 모집글 A - 자바 기초 스터디' AS title, '매주 화요일 저녁, 자바 기초 문법을 함께 공부합니다.' AS content, 5 AS capacity
+    UNION ALL SELECT '[테스트] 모집글 B - 알고리즘 스터디', '백준 문제를 하루 2개씩 풀고 서로 리뷰합니다.', 5
+    UNION ALL SELECT '[테스트] 모집글 C - 현직자 면접 특강 (정원 1명)', '현직 개발자와 1:1 모의 면접. 단 1명만 모집합니다.', 1
+) t
+WHERE m.username = 'admin';
 
--- ② 초기화 : 다시 테스트할 때 (A · B · C 의 신청 내역 삭제 + 신청 인원 0)
-DELETE FROM enrollments WHERE post_id IN (SELECT id FROM posts WHERE title LIKE '[A]%' OR title LIKE '[B]%' OR title LIKE '[C]%');
-UPDATE posts SET applied_count = 0 WHERE title LIKE '[A]%' OR title LIKE '[B]%' OR title LIKE '[C]%';
+-- ② 초기화 (단계 5 에서 다시 테스트할 때) : 모든 신청 내역을 지우고 신청 인원을 0 으로
+--    아래 두 줄의 주석(--)을 지우고 실행한다.
+-- DELETE FROM enrollments WHERE id > 0;
+-- UPDATE posts SET applied_count = 0 WHERE id > 0;
 ```
+
+> `SELECT … FROM member JOIN (…) t` : 관리자의 id 를 몰라도 `username = 'admin'` 으로 찾아서 3줄을 한 번에 넣는다.
 
 | # | 계정 | 하는 일 | 기대 결과 | 확인 |
 | - | ---- | ------- | --------- | ---- |
@@ -6358,10 +6372,10 @@ public String cancel(@PathVariable Long id, Principal principal, RedirectAttribu
 }
 ```
 
-`cart.html` 의 연습 ① 주석을 풀어 **취소 버튼**을 보이게 한다.
+`cart.html` 의 연습 ① 주석(`<!--/*` 줄과 `*/-->` 줄)을 지워 **취소 버튼**을 보이게 한다.
 
 ```html
-<form th:action="@{/cart/enrollments/{id}/cancel(id=${e.id})}" method="post" class="m-0"
+<form th:action="@{/cart/enrollments/{id}/cancel(id=${enrollment.id})}" method="post" class="m-0"
       onsubmit="return confirm('신청을 취소하시겠습니까?');">
     <button type="submit" class="btn btn-link btn-sm text-danger p-0"><i class="bi-x-circle me-1"></i>취소</button>
 </form>
@@ -6401,22 +6415,19 @@ public void delete(Long id) { // 글 삭제 (본인 또는 관리자)
 > **순서가 중요하다** : 파일은 롤백이 안 된다(함정 ④). 파일을 먼저 지우고 DB 삭제가 실패하면 **글은 남았는데 포스터만 사라진다.**
 > 그래서 **DB 삭제가 끝난 다음** 파일을 지운다.
 
-`FileStore` 에는 `delete()` 를 추가했다. `../` 로 uploads 밖의 파일을 지우지 못하게 경로를 확인한다.
+`fileStore.delete()` 는 **제공 FileStore 에 이미 있다.** `../` 로 uploads 밖의 파일을 지우지 못하게 경로를 확인한다.
 
 ```java
-// 파일 삭제 (글을 지울 때 · DB 저장이 실패했을 때)
+// 저장된 파일 삭제 (글을 지울 때)
 public void delete(String storedName) {
-    if (storedName == null || storedName.isBlank()) {
-        return;
-    }
-    Path target = root.resolve(storedName).normalize();
-    if (!target.startsWith(root)) { // ../ 로 다른 폴더 파일을 지우지 못하게
-        return;
-    }
+    if (storedName == null) return;
     try {
-        Files.deleteIfExists(target);
+        Path target = root.resolve(storedName).normalize();
+        if (target.startsWith(root)) {
+            Files.deleteIfExists(target);
+        }
     } catch (IOException e) {
-        // 파일 삭제 실패는 글 삭제를 막지 않는다 (쓰레기 파일만 남는다)
+        // 파일 삭제 실패는 글 삭제를 막지 않는다
     }
 }
 ```
@@ -6440,7 +6451,7 @@ public String delete(@PathVariable Long id) {
 <div th:if="${param.deleteError}" class="alert alert-danger py-2">… 신청자가 있는 모집글은 삭제할 수 없습니다.</div>
 ```
 
-**실행 결과** — admin 이 신청자 있는 [A] 삭제 → 안내 메시지 (글은 그대로)
+**실행 결과** — admin 이 신청자 있는 모집글 A 삭제 → 안내 메시지 (글은 그대로)
 
 ![모집글 삭제 막기](docs/images/week11-post-delete-block.png)
 
@@ -6473,7 +6484,7 @@ DELETE /api/admin/members/2  (admin)
 | ① | student1 : B 신청 취소 | "신청이 취소되었습니다.", B 0/5 | ✅ |
 | ① | 남의 신청 번호로 취소 요청 | 403 | ✅ 403 (없는 번호는 404) |
 | ① | 마감된 C 를 student3 이 취소 | C 가 다시 모집 중 | ✅ C 0/1, 바구니 담기 버튼 다시 보임 |
-| ② | 신청자 있는 모집글 삭제 | 안내 메시지 | ✅ `/board/5?deleteError` |
+| ② | 신청자 있는 모집글 삭제 | 안내 메시지 | ✅ `/board/1?deleteError` |
 | ② | 신청자 없는 포스터 글 삭제 | 파일도 사라짐 | ✅ `uploads/` 에서 파일 삭제 |
 | ② | 신청 내역 있는 회원 삭제 | 안내 메시지 (API 400) | ✅ 화면 빨간 안내, API 400 |
 
@@ -6496,7 +6507,7 @@ DELETE /api/admin/members/2  (admin)
 
 | 구분 | 파일 | 핵심 |
 | ---- | ---- | ---- |
-| 단계 0 | `FileStore.java`, `cart.html`, `error/413.html`, `css/board.css`, `board/*.html` | 제공 코드 (저장소에는 같은 디자인으로 직접 작성) |
+| 단계 0 | `FileStore.java`, `cart.html`, `error/413.html`, `css/board.css`, `board/*.html` | 제공 코드 그대로 (`cart.html` 은 연습 ① 주석만 풀었다) |
 | 단계 1 | `model/domain/Post.java` | `capacity`, `appliedCount`, `posterFile`, `isRecruit()` · `isFull()` · `getRemaining()` |
 | 단계 1 · 2 | `model/dto/PostForm.java` | `Integer capacity`, `MultipartFile poster` |
 | 단계 1 · 2 · 3 | `model/service/PostService.java` | 정원 검사, 포스터 저장, `findAllById()` |
