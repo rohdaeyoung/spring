@@ -37,3 +37,6 @@ build/
 
 ### 로컬 비밀번호 설정 ###
 local.properties
+
+### [11주차] 업로드한 사진은 깃에 올리지 않는다 ###
+uploads/

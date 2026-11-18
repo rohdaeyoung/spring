@@ -17,6 +17,21 @@
 
 실행 : `./mvnw spring-boot:run` → http://localhost:8080
 
+## 주차별 목차
+
+| 주차 | 수업 내용 | 과제 |
+| ---- | --------- | ---- |
+| 2주차 | [개발 환경 설정 · URL 매핑과 컨트롤러](#2주차-수업-내용) | [URL 매핑과 컨트롤러 추가하기](#2주차-과제) |
+| 3주차 | [부트스트랩 포트폴리오 템플릿 적용](#3주차-수업-내용) | [Lighthouse 성능 분석](#3주차-과제) |
+| 4주차 | [데이터베이스(MySQL · JPA) 연동](#4주차-수업-내용) | [사용자 정보 수정 및 출력](#4주차-과제) |
+| 5주차 | [로그인 · 로그아웃 · 비밀번호 암호화](#5주차-수업-내용) | [remember-me · 비밀번호 확인](#5주차-과제) |
+| 6주차 | [권한(ROLE) 관리 · 관리자 페이지](#6주차-수업-내용) | [관리자 보호 · MANAGER 권한](#6주차-과제) |
+| 7주차 | [REST API 와 JSON](#7주차-수업-내용) | [회원 검색 API · 오류 처리 모으기](#7주차-과제) |
+| 8주차 | 중간고사 (실습 없음) | - |
+| 9주차 | [게시판 CRUD · 본인 확인](#9주차-수업-내용) | [조회수 · 내가 쓴 글](#9주차-과제) |
+| 10주차 | [페이징 · 검색 · 댓글](#10주차-수업-내용) | [내가 쓴 글 페이징 · 작성자 검색](#10주차-과제) |
+| 11주차 | [모집글 · 파일 업로드 · 신청 바구니 · 트랜잭션](#11주차-수업-내용) | [신청 취소 · 삭제 정리](#11주차-과제) |
+
 ---
 
 # 2주차 수업 내용
@@ -5339,3 +5354,1163 @@ public String list(@RequestParam(defaultValue = "0") int page,
 
 이 과제로 확인한 것은 **메서드 이름 조회든 JPQL 이든 마지막에 `Pageable` 만 더하면 페이징이 된다는 점**,
 그리고 **`p.author.name` 처럼 객체를 따라가면 JOIN 을 직접 쓰지 않아도 된다는 점**이다.
+
+---
+
+# 11주차 수업 내용
+
+11주차는 **지난주 게시판을 "특강·스터디 모집글" 로 키우는 것**이 목표다.
+모집글에 **포스터 이미지**를 올리고, 마음에 드는 모집글을 **신청 바구니**에 담았다가 **한 번에 신청 확정**한다.
+이때 "일부만 신청되는" 문제를 직접 만나고, **트랜잭션(`@Transactional`)** 으로 해결한다.
+
+| 주차 | 신청기에 더해지는 것 |
+| ---- | -------------------- |
+| 9 · 10주차 | 게시판 CRUD, 페이징, 검색, 댓글 |
+| **11주차 (오늘)** | **모집글 + 포스터 + 신청 바구니 + 신청 확정** |
+| 12주차 | 남은 자리 실시간 알림 (WebSocket) |
+| 13주차 | 마지막 1자리 동시 신청 (동시성, 선착순) |
+| 14주차 | 확정 메일, 오래된 바구니 비우기 (스케줄링) |
+
+## 1. 웹 트렌드 — 파일 업로드 · 장바구니 · 트랜잭션
+
+### 파일 업로드
+
+글자뿐 아니라 **이미지 · 파일**도 올린다. (프로필 사진, 중고 거래 사진, 과제 제출, 포스터)
+대신 파일은 글자보다 **크고 위험하다.**
+
+- 큰 파일 → 저장 비용(공간 · 시간)을 잡아먹는다
+- 다양한 악성 파일 → 해킹에 악용
+- 그래서 추가 설정이 필요하다 : **크기 제한 · 형식 검사 · 이름 바꾸기**
+
+| 저장 위치 | 예 | 장점 | 단점 |
+| --------- | -- | ---- | ---- |
+| **서버 폴더 (오늘)** | 작은 사이트, 학교 과제 | 바로 구현 | 서버를 여러 대로 늘리면 파일이 흩어짐 |
+| DB 에 통째로 (BLOB) | 작은 첨부 파일 | 글과 함께 백업 | DB 가 무거워진다 |
+| 클라우드 저장소 (Amazon S3) | 인스타그램, 쇼핑몰 | 용량 걱정 없음, 빠른 전송(CDN) | 비용, 설정 |
+
+### 장바구니 · 수강신청
+
+쇼핑몰 장바구니, 대학 **수강신청 장바구니**와 같은 기능이다.
+
+- 로그인 전 : 브라우저 · 세션에 보관
+- 로그인 후 : DB 에 보관 → 휴대폰 · PC 어디서나 같은 장바구니
+- **담을 때는 자리가 있었는데, 확정할 때는?** → 그사이 다른 사람이 신청했을 수 있다 → **확정 순간 다시 확인**
+
+| 보관 위치 | 언제 사라지나 | 다른 기기에서 | 쓰는 곳 |
+| --------- | ------------- | ------------- | ------- |
+| 쿠키 · 브라우저 저장소 | 사용자가 지울 때 | 안 보임 | 비로그인 장바구니 |
+| **세션 (오늘)** | 로그아웃 · 30분 동안 요청 없을 때 | 안 보임 | 잠깐 담아 두는 바구니 |
+| DB | 사용자가 뺄 때 | 보임 | 대형 쇼핑몰, 수강신청 |
+
+### 트랜잭션
+
+대표적인 예는 **계좌 이체 = 출금 + 입금** 이다. 출금만 되고 입금이 실패하면? → **돈이 사라진다.**
+그래서 **둘 다 성공하거나, 둘 다 없던 일로** 해야 한다. 이 **"한 묶음"** 을 **트랜잭션**이라고 한다.
+
+| 서비스 | 한 묶음으로 처리할 작업 | 하나라도 실패하면 |
+| ------ | ----------------------- | ----------------- |
+| 은행 이체 | 내 계좌 출금 + 상대 계좌 입금 | 출금도 취소 |
+| 쇼핑몰 결제 | 주문 저장 + 재고 차감 + 포인트 사용 | 주문 전체 취소 |
+| 공연 예매 | 좌석 2장 확보 + 결제 | 1장만 잡히지 않는다 |
+| **우리 신청기 (오늘)** | **바구니의 모집글 3개 신청** | **3개 모두 취소** |
+
+> 오늘의 묶음 : **신청 확정** = (신청 내역 저장 + 남은 자리 줄이기) × 바구니의 모집글 수
+
+## 2. 오늘의 실습 순서
+
+```
+단계 0        단계 1          단계 2            단계 3           단계 4             단계 5
+제공 코드 → 모집글       →  포스터 업로드  →  신청 바구니  →  신청 확정       →  @Transactional
+복사         (정원,           ⚠ 사진이          (세션)           ⚠ 일부만            로 해결
+             남은 자리)        안 올라간다                         신청된다
+```
+
+⚠ = **일부러 만나는 문제** → 그 자리에서 원인을 알고 고친다. 마무리는 **전체 테스트 → GIT**.
+
+## 3. 제공 코드와 컨트롤러의 약속 (단계 0)
+
+`11주차_제공코드` 폴더의 파일을 복사한다.
+
+| 파일 | 하는 일 |
+| ---- | ------- |
+| `model/service/FileStore.java` | 업로드 파일 저장 (확장자 · 내용 검사, UUID 이름) |
+| `templates/cart.html` | 신청 바구니 + 내 신청 내역 |
+| `templates/error/413.html` | 파일이 너무 클 때 화면 |
+| `static/css/board.css` | 모집 표시 · 포스터 · 바구니 디자인 |
+| `templates/board/` 화면 3개 | 목록 · 상세 · 글쓰기 (**단계 1 에서 덮어쓴다**) |
+| `테스트이미지/`, `11주차_신청테스트.sql` | 실습용 (깃에는 올리지 않는다) |
+
+> `templates/board/` 화면 3개는 **Post 에 정원 필드가 생긴 다음에** 덮어써야 한다.
+> 먼저 덮어쓰면 화면이 `post.recruit` 를 찾지 못해 목록이 500 이 된다.
+
+| 화면 | 주소 | 컨트롤러가 넘겨줄 값 | 언제 |
+| ---- | ---- | -------------------- | ---- |
+| `board/list` · `detail` | `GET /board`, `/board/{id}` | Post 의 `capacity`, `appliedCount`, `posterFile` | 단계 1 |
+| `board/form` | `POST /board/write` | PostForm 의 `capacity`, `poster` | 단계 1 · 2 |
+| `cart.html` | `GET /cart` | **`cartPosts`** (담은 모집글) | 단계 3 |
+| | | **`enrollments`** (내 신청 내역), `message` / `error` | 단계 4 |
+
+> 참고 : 이 저장소에는 11주차 제공 코드 원본 대신 **같은 디자인(9 · 10주차 화면)으로 직접 작성한 파일**이 들어 있다.
+> 컨트롤러와의 약속(위 표의 값 이름)은 수업 자료와 같다.
+
+## 4. 게시글 → 모집글
+
+**새 테이블을 만들지 않고 `Post` 를 확장**한다.
+
+- **정원이 있으면 모집글, 없으면(null) 일반 글**
+- 목록 · 검색 · 댓글을 **그대로** 쓴다
+- **남은 자리는 저장하지 않고 계산**해서 보여 준다 : `남은 자리 = 정원 - 신청 인원`
+
+| 칸 (같은 posts 테이블) | 일반 글 | 모집글 | 타입 |
+| ---------------------- | ------- | ------ | ---- |
+| title, content, author … | 있음 | 있음 | (9주차) |
+| `capacity` 정원 | **null** | 5 | `Integer` (null 가능) |
+| `applied_count` 신청 인원 | 0 | 0 → 신청마다 +1 | `int` (기본 0) |
+| `poster_file` 포스터 | null | `3f84…c2.png` | `String` (**파일 이름만**) |
+
+## 5. 모집글 (단계 1)
+
+### ① 엔티티 — Post.java
+
+기존 `Post.java` 의 맨 아래(댓글 목록 다음)에 추가한다.
+
+```java
+private List<Comment> comments = new ArrayList<>();
+// [11주차] 단계 1 : 모집글 (정원이 있으면 모집글, null 이면 일반 글)
+private Integer capacity; // 정원 (모집 인원)
+@Column(nullable = false) // 신청한 인원 (신청 확정마다 1 증가)
+private int appliedCount = 0;
+private String posterFile; // 포스터 이미지 : uploads/ 에 저장된 파일 이름 (단계 2)
+public boolean isRecruit() { return capacity != null; }                         // 모집글인가
+public boolean isFull() { return isRecruit() && appliedCount >= capacity; }     // 마감인가
+public int getRemaining() { return isRecruit() ? capacity - appliedCount : 0; } // 남은 자리
+```
+
+> **정원은 왜 `Integer`, 신청 인원은 왜 `int` 인가?** `int` 는 null 이 될 수 없다.
+> 정원은 "없음(= 일반 글)" 을 표현해야 하므로 `Integer`, 신청 인원은 항상 숫자이므로 `int`.
+
+**Thymeleaf(정확히는 SpEL)의 규칙** — 화면에 쓴 이름 앞에 `get` 이나 `is` 를 붙인 메서드를 찾아 호출한다.
+그래서 **필드 · DB 칸이 없어도** 메서드만 있으면 화면에서 쓸 수 있다.
+
+| 화면에 쓰는 이름 | 호출되는 메서드 | 필드 | DB 칸 | 값을 만드는 방법 |
+| ---------------- | --------------- | ---- | ----- | ---------------- |
+| `${post.recruit}` | `isRecruit()` | X | X | `capacity != null` (먼저 비교) |
+| `${post.full}` | `isFull()` | X | X | `appliedCount >= capacity` |
+| `${post.remaining}` | `getRemaining()` | X | X | `capacity − appliedCount` |
+
+> `isFull()` 에서 `isRecruit() &&` 를 **먼저** 검사하는 이유 : 일반 글은 `capacity` 가 null 이라
+> `appliedCount >= capacity` 를 바로 계산하면 `NullPointerException` 이 난다. `&&` 는 앞이 false 면 뒤를 실행하지 않는다.
+
+### ② 화면 덮어쓰기 · 재시작
+
+제공 `templates/board/` 화면 3개(list · detail · form)를 덮어쓰고 재시작 → 터미널에서 **칸 추가**를 확인한다.
+
+```
+Hibernate: alter table posts add column applied_count integer not null
+Hibernate: alter table posts add column capacity integer
+Hibernate: alter table posts add column poster_file varchar(255)
+```
+
+- 기존 글 108개 → `capacity = null` (일반 글), `applied_count = 0` (MySQL 이 숫자 칸의 빈 값을 0 으로 채운다)
+- 글쓰기 화면 아래에 **"특강·스터디 모집" 칸**이 생긴다 → 아직 `PostForm` 에 `capacity` 가 없어서 **저장은 안 된다**
+- 참고 : `ddl-auto=update` 는 개발용 설정이다 (운영 서버에서는 켜지 않는다)
+
+| 화면 | 바뀐 곳 |
+| ---- | ------- |
+| 목록 | 제목 앞 **모집 0/5** · **마감** |
+| 상세 | 포스터, 정원 · 신청 · 남은 자리, 진행 막대, **바구니 담기** |
+| 글쓰기 | 모집 인원 칸, 포스터 파일 칸 |
+
+→ 모집 인원을 넣어도 일반 글로 저장된다. **연결하자.**
+
+### ③ 폼 · 서비스 — PostForm, PostService
+
+`PostForm.java` 에 추가한다.
+
+```java
+// [11주차] 단계 1 : 모집 인원 (input name="capacity", 비우면 null = 일반 글)
+private Integer capacity;
+```
+
+`PostService.java` 두 곳에 추가한다.
+
+```java
+// ① write() 안 : 작성 시간 다음 줄
+post.setCreatedAt(LocalDateTime.now());
+post.setCapacity(form.getCapacity()); // [11주차] 단계 1 : 정원 (비우면 null = 일반 글)
+
+// ② validate() 맨 위
+private void validate(PostForm form) {
+    // [11주차] 단계 1 : 모집 인원은 1~100명
+    if (form.getCapacity() != null && (form.getCapacity() < 1 || form.getCapacity() > 100)) {
+        throw new IllegalArgumentException("모집 인원은 1~100명으로 입력하세요.");
+    }
+    ...
+```
+
+> 화면의 `<input type="number" min="1" max="100">` 은 **안내일 뿐**이다 (개발자 도구로 지울 수 있다).
+> 진짜 검사는 서버(서비스)가 한다 — 9주차 "화면 = 1차 안내, 진짜 검사는 서비스" 와 같은 원칙.
+
+**글쓰기 화면 — 특강·스터디 모집 칸**
+
+![글쓰기 모집 칸](docs/images/week11-form.png)
+
+### 모집글 테스트
+
+| # | 계정 | 하는 일 | 기대 결과 | 확인 |
+| - | ---- | ------- | --------- | ---- |
+| 1 | admin | 모집 인원 5 로 글쓰기 | 정원 5 · 신청 0 · 남은 자리 5 | ✅ |
+| 2 | - | 게시판 목록 | 제목 앞 **모집 0/5** | ✅ |
+| 3 | admin | 모집 인원을 비우고 글쓰기 | 일반 글 | ✅ 배지 없음 |
+| 4 | admin | 모집 인원 0 또는 101 | "모집 인원은 1~100명으로 입력하세요." | ✅ 서버가 막는다 |
+| 5 | - | 검색 · 페이지 · 댓글 | 그대로 동작 | ✅ |
+
+> 상세의 **바구니 담기** 버튼은 아직 404 → 단계 3 에서 만든다.
+
+→ 모집글에 **포스터 이미지**를 붙이자.
+
+## 6. 파일 업로드 개념 — multipart 와 MultipartFile
+
+- 지금까지 form 은 **글자만** 전송했다
+- 파일 업로드는 form 에 **`enctype="multipart/form-data"`** → 글자와 파일을 **조각(part)** 으로 나눠 함께 보낸다
+  - 제공 `form.html` 에 이미 있다 (**없으면 파일 이름만** 간다)
+- 파일 조각은 **`MultipartFile`** 로 받는다 → `PostForm` 에 `MultipartFile poster` 를 두면 **이름(`name="poster"`)으로 자동 연결**
+
+| MultipartFile 메서드 | 뜻 | 예 |
+| -------------------- | -- | -- |
+| `isEmpty()` | 파일을 안 골랐나 | 포스터 없는 글 → true |
+| `getOriginalFilename()` | 사용자 PC 의 파일 이름 | **믿으면 안 됨** |
+| `getContentType()` | 브라우저가 붙인 종류 | `image/png` (**바꿀 수 있음**) |
+| `getSize()` · `getInputStream()` | 크기 · 파일 내용 | 29862 바이트 |
+
+## 7. 포스터 업로드 (단계 2)
+
+### ① 폼 · 서비스 — PostForm, PostService
+
+`PostForm.java` 에 추가한다. (import : `org.springframework.web.multipart.MultipartFile`)
+
+```java
+// [11주차] 단계 2 : 포스터 이미지 (input type="file" name="poster")
+private MultipartFile poster;
+```
+
+`PostService.java` 두 곳에 추가한다.
+
+```java
+// ① 필드 (memberRepository 아래)
+@Autowired // [11주차] 단계 2 : 업로드 파일 저장소 (제공 코드)
+private FileStore fileStore;
+
+// ② write() 안 : 정원 다음 줄
+post.setCapacity(form.getCapacity());
+post.setPosterFile(fileStore.save(form.getPoster())); // [11주차] 단계 2 : 포스터 저장 → 파일 이름 (없으면 null)
+```
+
+> **DB 에는 파일 이름만** 저장한다. 파일 자체는 `프로젝트 폴더/uploads/` 에 있다.
+
+### ② 제공 코드 FileStore 살펴보기
+
+`save(MultipartFile)` 의 4단계 — **업로드 보안의 기본 (OWASP 권고)**
+
+```java
+String ext = StringUtils.getFilenameExtension(file.getOriginalFilename());
+if (ext == null || !ALLOWED.contains(ext.toLowerCase()))          // ① 허용한 확장자만
+    throw new IllegalArgumentException("이미지 파일(jpg, png, gif, webp)만 ...");
+if (!isImage(in.readNBytes(12)))                                  // ② 파일 앞부분으로 진짜 이미지인지
+    throw new IllegalArgumentException("이미지 파일이 아닙니다.");
+String storedName = UUID.randomUUID() + "." + ext.toLowerCase();  // ③ 이름은 서버가 새로
+Files.copy(in, root.resolve(storedName));                         // ④ uploads/ 에 저장
+return storedName;                                                // → DB 에는 이름만
+```
+
+| 원칙 | 지키지 않으면 | FileStore |
+| ---- | ------------- | --------- |
+| ① 확장자 허용 목록 | `.jsp` · `.html` 을 올려 서버 · 브라우저에서 실행 | jpg · png · gif · webp 만 |
+| ② 내용 확인 | 이름만 `.png` 인 스크립트 (확장자 · Content-Type 은 바꿀 수 있다) | 첫 바이트 (PNG = `89 50 4E 47`) |
+| ③ 이름은 서버가 | 같은 이름 덮어쓰기, `../../` 로 다른 폴더에 쓰기 | UUID (예 : `3f84…c2.png`) |
+| ④ 별도 폴더 | 웹 폴더(static)에 두면 바로 노출 · 실행 위험 | `프로젝트/uploads/` |
+
+> **매직 넘버(magic number)** = 파일 종류마다 정해진 첫 몇 바이트. JPG `FF D8 FF`, PNG `89 50 4E 47`, GIF `47 49 46 38`.
+> 이름은 마음대로 바꿀 수 있어도 **내용은 속일 수 없다.**
+
+### ③ 이미지 보여 주기 — WebConfig, SecurityConfig
+
+`config` 폴더에 `WebConfig.java` 를 만든다.
+
+```java
+@Configuration // [11주차] 단계 2 : 업로드한 파일을 주소로 보여 주는 설정
+public class WebConfig implements WebMvcConfigurer {
+    @Override
+    public void addResourceHandlers(ResourceHandlerRegistry registry) {
+        registry.addResourceHandler("/uploads/**")      // 주소 : /uploads/파일이름
+                .addResourceLocations("file:uploads/"); // 실제 위치 상대 경로 : 프로젝트 폴더/uploads/
+    }
+}
+```
+
+| 코드 | 뜻 |
+| ---- | -- |
+| `addResourceHandler("/uploads/**")` | 이 **주소**로 요청이 오면 |
+| `addResourceLocations("file:uploads/")` | 이 **폴더**에서 파일을 찾아 보내 준다 (`file:` = 컴퓨터의 폴더, `classpath:` 가 아님) |
+
+기존 `SecurityConfig.java` 의 게시판 줄 아래에 추가한다.
+
+```java
+.requestMatchers("/board", "/board/{id:\\d+}").permitAll()
+.requestMatchers("/uploads/**").permitAll() // [11주차] 포스터 이미지 : 누구나 (올리기는 글쓰기라서 로그인)
+```
+
+### 포스터 테스트
+
+| # | 하는 일 | 기대 결과 | 확인 |
+| - | ------- | --------- | ---- |
+| 1 | 모집글 + `포스터_스프링스터디.png` | 상세에 포스터, `uploads/` 에 UUID 이름 파일 | ✅ `uploads/38e31553-…-daeb85e721ca.png` |
+| 2 | 로그아웃 후 같은 상세 | 포스터가 보인다 | ✅ `/uploads/…png` → 200 `image/png` |
+| 3 | `가짜이미지.png` | "이미지 파일이 아닙니다." | ✅ |
+| 4 | 휴대폰 사진 (`큰사진_3MB.jpg`) | **413 파일이 너무 큽니다** | ✅ 413 (아직 기본 1MB) |
+
+**로그아웃 상태에서 본 상세 — 포스터 + 모집 정보**
+
+![포스터 상세](docs/images/week11-detail-poster.png)
+
+**가짜 이미지 → 내용 검사에서 거부**
+
+![가짜 이미지](docs/images/week11-fake-image.png)
+
+**왜 static 이 아니라 uploads 일까?**
+
+| 구분 | static 폴더 | **uploads/ (오늘)** |
+| ---- | ----------- | ------------------- |
+| 실행 중에 저장하면 | 재시작 전엔 안 보일 수 있음 | 바로 보인다 |
+| 배포(jar) 하면 | jar 안이라 쓸 수 없다 | 서버 폴더에 그대로 |
+| GitHub | 사용자 사진이 소스와 섞임 | `.gitignore` 로 제외 |
+
+→ 크기 제한을 우리 서비스에 맞게 바꾸자 (**기본 1MB**).
+
+### ④ 업로드 크기 설정 — application.properties
+
+맨 아래에 추가한다.
+
+```properties
+# [11주차] 단계 2 : 파일 업로드 크기 (기본값 : 파일 1MB, 요청 전체 10MB)
+spring.servlet.multipart.max-file-size=5MB
+spring.servlet.multipart.max-request-size=10MB
+```
+
+| 설정 | 뜻 | 기본값 | 오늘 |
+| ---- | -- | ------ | ---- |
+| `max-file-size` | 파일 한 개의 최대 크기 | 1MB | **5MB** |
+| `max-request-size` | 요청 전체 (글자 + 파일) | 10MB | 10MB |
+
+- 재시작 → 휴대폰 사진(3MB) 다시 올리기 → **성공** ✅
+- 5MB 넘는 파일(`큰사진_7MB.jpg`)은 여전히 **413** ✅
+- 제공 `form.html` 은 **고르는 순간** 먼저 알려 준다 (자바스크립트 `file.size`)
+
+> ⚠ 크기 제한 **`-1`(무제한) 은 금지** — 수 GB 파일로 디스크 · 메모리를 채우는 **DoS 공격**에 노출될 수 있다.
+
+**7MB 사진을 고르는 순간 — 자바스크립트 안내 (우회 가능, 안내용)**
+
+![크기 안내](docs/images/week11-413-warn.png)
+
+**그래도 등록하면 — 서버가 413 (`templates/error/413.html`)**
+
+![413 화면](docs/images/week11-413.png)
+
+### 코드 돋보기 : 업로드 요청의 실제 모습
+
+크롬이 실제로 보낸 요청 (줄임)
+
+```
+POST /board/write HTTP/1.1
+Content-Type: multipart/form-data; boundary=----WebKit…Sk6h   ← 구분선
+Content-Length: 30990
+
+------WebKit…Sk6h
+Content-Disposition: form-data; name="_csrf"                  ← CSRF 토큰
+S-ntCddhfWNMqcaBicu6aHOl…
+------WebKit…Sk6h
+Content-Disposition: form-data; name="title"                  ← 글자 조각
+스프링 부트 스터디원 모집
+   … content, capacity(5) 조각 …
+------WebKit…Sk6h
+Content-Disposition: form-data; name="poster"; filename="포스터_스프링스터디.png"
+Content-Type: image/png                                       ← 파일 조각
+\x89PNG\r\n\x1a\n … (29,862 바이트)
+------WebKit…Sk6h--                                           ← 끝
+```
+
+- **boundary(구분선)** 사이에 조각이 하나씩, 첫 조각이 **CSRF 토큰**
+- `filename` · `Content-Type` 은 **보내는 쪽이 적는 글자** → FileStore 가 파일 내용(`89 50 4E 47`)을 직접 확인한다
+
+**크기 제한은 겹으로**
+
+| 어디서 | 무엇으로 | 넘으면 |
+| ------ | -------- | ------ |
+| ① 브라우저 | form.html 자바스크립트 (`file.size`) | 알림 — **우회 가능, 안내용** |
+| ② 스프링 : 파일 1개 | `max-file-size=5MB` | 413 (7MB 사진) |
+| ③ 스프링 : 요청 전체 | `max-request-size=10MB` | 413 (합계 10MB 초과) |
+
+## 8. 바구니는 어디에? — 세션
+
+- **세션** (5주차 로그인에서 이미 쓰고 있다)
+  - **서버 메모리**에 사용자마다 보관함 1개
+  - 브라우저는 **번호표(`JSESSIONID`)** 만 가진다
+  - `session.setAttribute("cart", …)` / `session.getAttribute("cart")`
+- **바구니에는 모집글 번호만** 담는다 → 남은 자리는 **볼 때마다 DB 에서 새로**
+
+| 데이터 | 저장 위치 | 이유 |
+| ------ | --------- | ---- |
+| 로그인 정보 | 세션 (5주차) | 로그인한 동안만 |
+| **신청 바구니 (오늘)** | **세션** | 확정 전 임시 목록 |
+| **신청 내역 (오늘)** | **DB (enrollments)** | 오래 남고, 정원 계산에 쓴다 |
+| 남은 자리 | DB 에서 계산 | 다른 사람 신청으로 계속 바뀐다 |
+
+## 9. 신청 바구니 (단계 3)
+
+### ① 서비스 — PostService
+
+`findById()` 위에 추가한다. (import : `java.util.Collection`)
+
+```java
+// [11주차] 단계 3 : 바구니에 담긴 글들 (번호 목록으로 한 번에)
+public List<Post> findAllById(Collection<Long> ids) {
+    return postRepository.findAllById(ids); // SELECT ... WHERE id IN (?, ?, ?)
+}
+```
+
+| 코드 | 뜻 | 9 · 10주차와 비교 |
+| ---- | -- | ----------------- |
+| `findAllById(ids)` | `JpaRepository` 에 이미 있다 → 감싸기만 | `findById(id)` 는 1개, 이것은 **여러 개** |
+| `Collection<Long>` | Set · List 무엇이든 받는다 | 바구니는 **Set** |
+| `HttpSession session` | 컨트롤러 매개변수에 쓰면 **지금 사용자의 세션** | `Principal`(로그인 사용자)과 같은 방식 |
+
+### ② 컨트롤러 — CartController
+
+`controller` 폴더에 `CartController.java` 를 만든다.
+
+```java
+@Controller // [11주차] 단계 3 : 신청 바구니 (세션에 모집글 번호를 담아 둔다)
+@RequestMapping("/cart")
+public class CartController {
+    @Autowired
+    PostService postService;
+
+    @GetMapping // 바구니 화면 : GET /cart (로그인 필요)
+    public String cart(HttpSession session, Model model) {
+        model.addAttribute("cartPosts", postService.findAllById(getCart(session))); // 담은 모집글
+        return "cart"; // templates/cart.html
+    }
+
+    @PostMapping("/{postId}") // 담기 : POST /cart/3
+    public String add(@PathVariable Long postId, HttpSession session) {
+        Post post = postService.findById(postId); // 없는 글이면 404
+        if (!post.isRecruit()) {
+            return "redirect:/board/" + postId; // 일반 글은 담지 않는다
+        }
+        getCart(session).add(postId); // Set : 같은 글을 두 번 담아도 1개
+        return "redirect:/cart";
+    }
+
+    @PostMapping("/{postId}/remove") // 빼기 : POST /cart/3/remove
+    public String remove(@PathVariable Long postId, HttpSession session) {
+        getCart(session).remove(postId);
+        return "redirect:/cart";
+    }
+
+    // 세션에서 바구니 꺼내기 (처음이면 빈 바구니를 만들어 넣는다)
+    @SuppressWarnings("unchecked")
+    private Set<Long> getCart(HttpSession session) {
+        Set<Long> cart = (Set<Long>) session.getAttribute("cart");
+        if (cart == null) {
+            cart = new LinkedHashSet<>(); // 담은 순서를 지키는 Set
+            session.setAttribute("cart", cart);
+        }
+        return cart;
+    }
+}
+```
+
+| 주소 | 하는 일 | 끝나면 |
+| ---- | ------- | ------ |
+| `POST /cart/{postId}` | 번호를 Set 에 추가 (일반 글은 거절) | redirect → `/cart` (PRG, 10주차) |
+| `POST /cart/{postId}/remove` | 번호를 Set 에서 삭제 | redirect → `/cart` |
+
+> 담기는 **상태를 바꾸는 요청이라 GET 이 아니라 POST** 다 (CSRF 보호 대상).
+
+| 코드 | 뜻 |
+| ---- | -- |
+| `session.getAttribute("cart")` | 보관함에서 "cart" 꺼내기 → `Object` 로 나온다 |
+| `(Set<Long>)` + `@SuppressWarnings` | Set 으로 바꾼다 (경고 숨기기) |
+| `session.setAttribute("cart", cart)` | 처음이면 빈 바구니를 넣어 둔다 |
+| `LinkedHashSet` | **중복 없음 + 담은 순서 기억** (단계 4 에서 중요) |
+
+> **Set 을 고치기만 해도 반영되는 이유** : 서버 메모리의 세션이 **같은 객체**를 가리키고 있기 때문이다.
+> 그래서 `add()` 다음에 `setAttribute()` 를 다시 부르지 않아도 된다.
+
+### 바구니 테스트
+
+| # | 계정 | 하는 일 | 기대 결과 | 확인 |
+| - | ---- | ------- | --------- | ---- |
+| 1 | student1 | 모집글 상세 → 바구니에 담기 | 바구니 화면에 1개 | ✅ |
+| 2 | student1 | 2개 더 담기, 같은 글 한 번 더 | **3개 (중복 없음)**, 목록 배지 3 | ✅ |
+| 3 | student1 | 빼기 | 2개 | ✅ |
+| 4 | student3 (시크릿 창) | 바구니 열기 | **빈 바구니** (세션이 다름) | ✅ |
+| 5 | student1 | 로그아웃 → 로그인 → 바구니 | **빈 바구니** | ✅ |
+| 6 | 로그인 안 함 | `/cart` | 로그인 화면 | ✅ |
+| - | student1 | 일반 글 담기 (`POST /cart/2`) | 상세로 돌아감, 바구니 그대로 | ✅ |
+
+> **모두 신청 확정** 버튼은 아직 **400** → 단계 4. `/cart/confirm` 의 `confirm` 을 `{postId}` 번호로 읽으려다 실패한다.
+
+**목록 위 바구니 배지 + 모집 표시**
+
+![목록 배지](docs/images/week11-list.png)
+
+**담은 모집글 3개 (같은 글을 두 번 담아도 1개)**
+
+![신청 바구니](docs/images/week11-cart.png)
+
+### 코드 돋보기 : 세션의 실제
+
+개발자 도구 → Application → Cookies
+
+```
+브라우저 쿠키   JSESSIONID = D3AD800A…   HttpOnly   만료 : 세션(브라우저 닫으면)
+        ↓ 요청마다 자동으로 함께 감
+서버 메모리     세션 D3AD800A… → SPRING_SECURITY_CONTEXT   ← 5주차 로그인 정보
+                               cart = [214, 215, 216]     ← 오늘 담은 모집글 번호
+```
+
+**세션 vs DB 바구니** (실무에서 고르는 기준)
+
+| 구분 | **세션 바구니 (오늘)** | DB 바구니 |
+| ---- | ---------------------- | --------- |
+| 보관 | 서버 메모리 | 테이블 (`cart_items`) |
+| 사라지는 때 | 로그아웃, 30분 동안 요청 없음, **서버 재시작** | 사용자가 뺄 때 |
+| 휴대폰 · PC | 따로 | 같은 바구니 |
+| 서버 여러 대 | 서버마다 세션이 달라 공유 장치 필요 (Redis 세션 등) | 문제없음 |
+| 어울리는 곳 | 짧게 쓰는 임시 목록 | 쇼핑몰 장바구니, 수강신청 |
+
+## 10. 신청 확정의 흐름
+
+모집글 하나마다 할 일 (**실제 DB 에 2번 기록**)
+
+| 순서 | 할 일 | 실패하면 |
+| ---- | ----- | -------- |
+| ① 검사 | 이미 신청? 마감? (SELECT) | "이미 신청한 …" · "정원이 마감 …" |
+| ② 저장 | 신청 내역 INSERT | - |
+| ③ 차감 | 신청 인원 + 1 UPDATE | - |
+
+| 테이블 | 무엇 | 외래 키 | 주차 |
+| ------ | ---- | ------- | ---- |
+| posts | 글 · 모집글 | `member_id` | 9주차 |
+| comments | 댓글 | `post_id`, `member_id` | 10주차 |
+| **enrollments** | **신청 내역** | **`post_id`, `member_id`** | **11주차** |
+
+- 바구니에 3개(A, B, C)면 → 테이블 2개(enrollments, posts)에 **쓰기 6번**
+- **이 6번이 한 묶음이어야 한다.** 5번째에서 실패했는데 앞의 4번이 DB 에 남아 있으면 → **일부만 신청됨**
+
+## 11. 신청 확정 (단계 4)
+
+### ① 신청 엔티티 — Enrollment.java
+
+`domain` 폴더에 만든다.
+
+```java
+@Entity // [11주차] 단계 4 : 신청 내역 (회원 1명이 모집글 1개에 신청) : enrollments 테이블
+@Table(name = "enrollments")
+@Data
+public class Enrollment {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    @ManyToOne(fetch = FetchType.LAZY) // 신청한 회원 (N : 1)
+    @JoinColumn(name = "member_id", nullable = false)
+    private Member member;
+    @ManyToOne(fetch = FetchType.LAZY) // 신청한 모집글 (N : 1)
+    @JoinColumn(name = "post_id", nullable = false)
+    private Post post;
+    @Column(nullable = false) // 신청 시간
+    private LocalDateTime createdAt;
+}
+```
+
+> **`@ManyToOne`** : 신청 내역 **여러 개(Many)** 가 회원 **한 명(One)** 에게 속한다. 한 학생이 여러 모집글에 신청할 수 있다.
+> 모양은 10주차 댓글(`Comment`)과 같다 — 외래 키 2개.
+
+재시작 → 터미널 로그
+
+```
+create table enrollments (id bigint not null auto_increment, created_at datetime(6) not null,
+       member_id bigint not null, post_id bigint not null, primary key (id))
+alter table enrollments add constraint ... foreign key (member_id) references member (id)
+alter table enrollments add constraint ... foreign key (post_id) references posts (id)
+```
+
+### ② 신청 리포지토리 — EnrollmentRepository.java
+
+```java
+@Repository // [11주차] 단계 4 : 신청 내역 리포지토리
+public interface EnrollmentRepository extends JpaRepository<Enrollment, Long> {
+    // 이미 신청했는지 : SELECT ... WHERE member_id = ? AND post_id = ?
+    boolean existsByMemberAndPost(Member member, Post post);
+    // 내 신청 내역 (최근 신청이 위로) : member → username 으로 찾기
+    List<Enrollment> findByMember_UsernameOrderByIdDesc(String username);
+}
+```
+
+| 메서드 | 만들어지는 SQL | 비슷한 것 |
+| ------ | -------------- | --------- |
+| `existsByMemberAndPost` | `... WHERE member_id=? AND post_id=?` (있으면 true) | 10주차 `existsByAuthor` |
+| `findByMember_UsernameOrderByIdDesc` | `... JOIN member ... WHERE username=? ORDER BY id DESC` | 10주차 `findByAuthor_Username` |
+
+### ③ 신청 서비스 — EnrollmentService.java
+
+**리포지토리 3개**를 함께 쓴다 — 여러 테이블을 한 번에 다루는 일은 **서비스**가 맡는다.
+
+```java
+@Service // [11주차] 단계 4 : 신청 서비스
+public class EnrollmentService {
+    @Autowired
+    private EnrollmentRepository enrollmentRepository;
+    @Autowired
+    private PostRepository postRepository;
+    @Autowired
+    private MemberRepository memberRepository;
+
+    // 내 신청 내역
+    public List<Enrollment> findMine(String username) {
+        return enrollmentRepository.findByMember_UsernameOrderByIdDesc(username);
+    }
+
+    // 단계 4 : 바구니의 모집글을 한 번에 신청 확정
+    public int confirm(String username, Collection<Long> postIds) {
+        if (postIds.isEmpty()) {
+            throw new IllegalStateException("바구니가 비어 있습니다.");
+        }
+        Member member = memberRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalStateException("회원이 존재하지 않습니다."));
+        for (Long postId : postIds) {
+            Post post = postRepository.findById(postId)
+                    .orElseThrow(() -> new IllegalStateException("삭제된 모집글이 바구니에 있습니다."));
+            if (enrollmentRepository.existsByMemberAndPost(member, post)) {          // ① 검사
+                throw new IllegalStateException("이미 신청한 모집글입니다 : " + post.getTitle());
+            }
+            if (post.isFull()) { // 담을 때는 자리가 있었지만, 그사이 마감됐을 수 있다
+                throw new IllegalStateException("정원이 마감되었습니다 : " + post.getTitle());
+            }
+            Enrollment enrollment = new Enrollment();
+            enrollment.setMember(member);
+            enrollment.setPost(post);
+            enrollment.setCreatedAt(LocalDateTime.now());
+            enrollmentRepository.save(enrollment);     // ② INSERT 신청 내역
+            post.setAppliedCount(post.getAppliedCount() + 1);
+            postRepository.save(post);                 // ③ UPDATE 신청 인원 + 1 (남은 자리 - 1)
+        }
+        return postIds.size();
+    }
+}
+```
+
+> **세 번째 모집글에서 예외로 멈추면, 앞의 두 개는 어떻게 될까?** → 오늘의 문제
+> 코드는 A 검사 → A 저장 → B 검사 → B 저장 → C 검사 순서… C 의 검사에서 멈추면 **A 와 B 는 이미 저장됨.**
+
+### ④ 신청 컨트롤러 — CartController 에 추가
+
+(import : `java.security.Principal`, `RedirectAttributes`, `EnrollmentService`)
+
+```java
+@Autowired // ① 필드 (postService 아래)
+EnrollmentService enrollmentService; // 단계 4
+
+@GetMapping // ② cart() : Principal 추가 + 내 신청 내역
+public String cart(HttpSession session, Principal principal, Model model) {
+    model.addAttribute("cartPosts", postService.findAllById(getCart(session))); // 담은 모집글
+    model.addAttribute("enrollments", enrollmentService.findMine(principal.getName())); // 단계 4 : 내 신청 내역
+    return "cart";
+}
+
+@PostMapping("/confirm") // ③ 맨 아래 : 신청 확정 : POST /cart/confirm
+public String confirm(HttpSession session, Principal principal, RedirectAttributes redirect) {
+    Set<Long> cart = getCart(session);
+    try {
+        int count = enrollmentService.confirm(principal.getName(), cart);
+        cart.clear(); // 성공하면 바구니를 비운다
+        redirect.addFlashAttribute("message", count + "개 모집글 신청이 확정되었습니다.");
+    } catch (IllegalStateException e) {
+        redirect.addFlashAttribute("error", e.getMessage()); // 실패 이유 (바구니는 그대로)
+    }
+    return "redirect:/cart";
+}
+```
+
+| redirect 후 값 전달 | 쓴 곳 | 특징 |
+| ------------------- | ----- | ---- |
+| 주소 파라미터 `?commentError` | 10주차 댓글 | 주소에 보인다, 짧은 표시용 |
+| **flash `addFlashAttribute`** | **오늘** | **다음 화면에 딱 한 번**, 새로고침하면 사라짐 |
+
+> `/confirm` 이 `/{postId}` 와 같은 클래스에 있어도 괜찮다 — 스프링은 **글자가 딱 맞는 주소를 먼저** 고른다.
+
+### 신청 테스트 — ⚠ 일부만 신청된다
+
+재시작 → `11주차_신청테스트.sql` 실행 (A · B 정원 5, C 정원 1)
+
+```sql
+-- ① 처음 한 번 : 모집글 만들기
+SET @author = (SELECT id FROM member WHERE username = 'admin');
+INSERT INTO posts (title, content, member_id, created_at, view_count, capacity, applied_count) VALUES
+  ('[A] 스프링 부트 스터디', '정원 5명 모집글 A (신청 테스트용)', @author, NOW(), 0, 5, 0),
+  ('[B] 알고리즘 스터디',   '정원 5명 모집글 B (신청 테스트용)', @author, NOW(), 0, 5, 0),
+  ('[C] 현직자 취업 특강',  '정원 1명 모집글 C (마감 테스트용)', @author, NOW(), 0, 1, 0);
+
+-- ② 초기화 : 다시 테스트할 때 (A · B · C 의 신청 내역 삭제 + 신청 인원 0)
+DELETE FROM enrollments WHERE post_id IN (SELECT id FROM posts WHERE title LIKE '[A]%' OR title LIKE '[B]%' OR title LIKE '[C]%');
+UPDATE posts SET applied_count = 0 WHERE title LIKE '[A]%' OR title LIKE '[B]%' OR title LIKE '[C]%';
+```
+
+| # | 계정 | 하는 일 | 기대 결과 | 확인 |
+| - | ---- | ------- | --------- | ---- |
+| 1 | student1 | A 담기 → 모두 신청 확정 | "1개 … 확정", A 1/5 | ✅ |
+| 2 | student1 | A 다시 담기 → 확정 | "이미 신청 : A" | ✅ |
+| 3 | student1 | A 빼기 → B, C 순서로 담기 | 바구니 2개 | ✅ |
+| 4 | student3 (시크릿) | C 담기 → 확정 | C 마감 (1/1) | ✅ |
+| 5 | student1 | 모두 신청 확정 | "정원이 마감되었습니다 : C" | ✅ |
+| 6 | student1 | 내 신청 내역 · B 상세 | **B 는 신청됨 (1/5)** | ⚠ 실패라고 했는데 B 가 들어가 있다 |
+
+**5 ~ 6 : 마감 안내가 떴는데 내 신청 내역에 B 가 있다**
+
+![일부만 신청](docs/images/week11-confirm-partial.png)
+
+**C 를 빼려고 다시 확정하면 → "이미 신청 : B" → 영영 확정할 수 없다**
+
+![영영 확정 불가](docs/images/week11-confirm-stuck.png)
+
+→ **왜 B 는 취소되지 않았을까?**
+
+## 12. 코드 돋보기 : save() 마다 커밋
+
+- 리포지토리의 `save()` 는 **혼자서 트랜잭션을 시작하고 바로 커밋**한다
+- 스프링 데이터 JPA 의 CRUD 메서드(`save`, `findById` …)는 **각자 `@Transactional`** 이 붙어 있다
+
+단계 4 실제 로그 (`logging.level.org.springframework.orm.jpa.JpaTransactionManager=DEBUG`, 줄임)
+
+```
+Creating new transaction with name [...SimpleJpaRepository.save]       ← ① B 신청 저장
+insert into enrollments (created_at,member_id,post_id) values (?,?,?)
+Committing JPA transaction on EntityManager                            ← 확정! (되돌릴 수 없음)
+Creating new transaction with name [...SimpleJpaRepository.save]       ← ② B 인원 + 1
+Committing JPA transaction on EntityManager                            ← 확정!
+update posts set applied_count=?, ... where id=?
+Creating new transaction with name [...SimpleJpaRepository.findById]   ← ③ C 조회 → 마감 → 예외
+```
+
+| 순서 | 작업 | 트랜잭션 | 결과 |
+| ---- | ---- | -------- | ---- |
+| 1 | B 신청 INSERT | ① 시작 → 커밋 | DB 에 남음 |
+| 2 | B 인원 UPDATE | ② 시작 → 커밋 | DB 에 남음 |
+| 3 | C 조회 → 마감 → 예외 | ③ (읽기만) | **앞의 커밋은 그대로** |
+
+## 13. 트랜잭션(transaction)
+
+**여러 작업을 하나처럼 묶는다.**
+
+- 끝까지 성공 → **커밋** (모두 확정)
+- 중간에 실패 → **롤백** (모두 없던 일)
+- 스프링에서는 **`@Transactional` 한 줄** : 메서드 시작 = 트랜잭션 시작, 정상 끝 = 커밋, **예외 = 롤백**
+
+**ACID — 신청 확정으로 보면**
+
+| 약속 | 뜻 | 신청 확정에서 |
+| ---- | -- | ------------- |
+| **A**tomicity 원자성 | 모두 되거나, 하나도 안 되거나 | **B · C 모두 or 모두 취소 (오늘)** |
+| **C**onsistency 일관성 | 규칙이 깨지지 않는다 | 신청 내역 수 = 신청 인원 |
+| **I**solation 격리성 | 동시에 해도 끼어들지 않는다 | 마지막 자리 동시 신청 → 13주차 |
+| **D**urability 지속성 | 커밋한 것은 사라지지 않는다 | 서버가 꺼져도 남는다 |
+
+## 14. @Transactional 적용 (단계 5)
+
+`EnrollmentService.java` 의 `confirm()` 위에 **한 줄** 추가한다. (import : `org.springframework.transaction.annotation.Transactional`)
+
+```java
+// 단계 4 : 바구니의 모집글을 한 번에 신청 확정
+@Transactional // 단계 5 : 하나라도 실패하면 모두 취소 (롤백)
+public int confirm(String username, Collection<Long> postIds) {
+```
+
+`신청테스트.sql` ② 초기화 → 재시작 → 신청 테스트 3~5번 다시
+
+| 확인 (같은 시나리오 : B, C 확정 중 C 마감) | 단계 4 (없음) | **단계 5 (@Transactional)** |
+| ------------------------------------------ | ------------- | --------------------------- |
+| 화면 안내 | "정원 마감 : C" | 같음 |
+| B 신청 내역 | 저장됨 | **없음** |
+| B 신청 인원 | 1/5 | **0/5** |
+| 바구니 | B, C | B, C (**C 빼고 다시 확정 → 성공**) |
+
+실측 (단계 5) : 확정 실패 직후 DB — `[B] 0/5`, `enrollments` 에 B 신청 **0건** ✅
+
+**마감 안내 + 내 신청 내역에 B 가 없다 (A 만)**
+
+![롤백](docs/images/week11-confirm-rollback.png)
+
+**C 를 빼고 다시 확정 → 성공, 바구니 비움**
+
+![확정 성공](docs/images/week11-confirm-ok.png)
+
+### 코드 돋보기 : 롤백의 실제
+
+단계 5 실제 로그 (줄임)
+
+```
+Creating new transaction with name [...EnrollmentService.confirm]
+Participating in existing transaction     ← findById(B) : 바깥 트랜잭션에 "참여"
+Participating in existing transaction     ← save(B 신청)
+insert into enrollments (created_at,member_id,post_id) values (?,?,?)   ← 나가지만 아직 확정 아님
+Participating in existing transaction     ← save(B 인원) : UPDATE 는 아직 안 나감
+Participating in existing transaction     ← findById(C)
+Initiating transaction rollback           ← C 마감 예외 → 롤백
+Rolling back JPA transaction on EntityManager   ← B 의 INSERT 도 취소
+```
+
+| 로그 | 단계 4 | 단계 5 |
+| ---- | ------ | ------ |
+| 트랜잭션 이름 | `SimpleJpaRepository.save` (여러 번) | **`EnrollmentService.confirm` (1번)** |
+| `save()` 할 때 | Creating new … → Committing | **Participating in existing** |
+| 예외가 나면 | 이미 커밋됨 | **Rolling back** |
+| `UPDATE posts` | `save()` 즉시 | 커밋 직전에 (롤백이면 안 나감) |
+
+> **Participating(참여)** = `save()` 에 붙은 `@Transactional` 이 "이미 바깥 트랜잭션이 있네?" 하고 **새로 만들지 않고 들어간다**
+> (기본 전파 방식 `PROPAGATION_REQUIRED`).
+
+## 15. 코드 돋보기 : 프록시와 함정
+
+스프링은 `EnrollmentService` 앞에 **대리 객체(프록시)** 를 세운다 (10주차 LAZY 의 프록시와 같은 생각).
+
+```
+CartController → [프록시 : 트랜잭션 시작] → EnrollmentService.confirm() → [프록시 : 커밋 or 롤백]
+```
+
+**실무에서 자주 겪는 함정 4가지**
+
+| 함정 | 예 | 결과 | 해결 |
+| ---- | -- | ---- | ---- |
+| ① 체크 예외 | `throw new IOException()` | **커밋된다** (기본은 `RuntimeException` · `Error` 만 롤백) | `RuntimeException` 또는 `rollbackFor` |
+| ② 예외를 삼킨다 | `confirm()` 안에서 try-catch 후 무시 | 예외가 프록시까지 안 가서 커밋 | **서비스 밖(컨트롤러)에서** 잡는다 |
+| ③ 같은 클래스 안 호출 | `this.confirm()` | 프록시를 안 거쳐 **트랜잭션 없음** | 다른 빈에서 호출 |
+| ④ 파일은 롤백 안 됨 | DB 실패 후 이미 저장한 포스터 | `uploads` 에 쓰레기 파일 | DB 성공 후 저장 · 실패 시 삭제 |
+
+> 오늘 `confirm()` 이 `IllegalStateException`(**RuntimeException**) 을 던지고, try-catch 를 **컨트롤러**에 둔 이유가 ① ② 다.
+
+## 16. 코드 돋보기 : 변경 감지 (Dirty Checking)
+
+트랜잭션 안에서 꺼낸 엔티티는 **JPA 가 지켜본다** → 값을 바꾸기만 해도 커밋할 때 UPDATE 가 자동으로 나간다.
+
+```java
+post.setAppliedCount(post.getAppliedCount() + 1);
+postRepository.save(post); // ← @Transactional 안에서는 없어도 UPDATE 가 나간다
+```
+
+| 구분 | 트랜잭션 밖 (단계 4) | 트랜잭션 안 (단계 5) |
+| ---- | -------------------- | -------------------- |
+| `findById()` 로 꺼낸 Post | 꺼내자마자 관리 끝 | **커밋까지 관리** |
+| `setAppliedCount()` 만 | DB 그대로 | **커밋 때 UPDATE** |
+| `save()` 를 쓰면 | 그때 바로 UPDATE (커밋) | 이미 관리 중 → 커밋 때 한 번 |
+
+- 오늘은 읽기 쉽게 `save()` 를 남겨 둔다 → **연습 ① 신청 취소에서 빼 본다**
+- 9주차 조회수 `read()` 도 같은 원리로 줄일 수 있다
+
+## 17. 전체 테스트 & 오류 해결
+
+처음부터 다시 : 모집글 + 포스터 → 바구니 담기 · 빼기 → 확정 성공 → 정원 마감 롤백
+
+| 증상 | 원인 → 해결 |
+| ---- | ----------- |
+| 목록 500 : `Property or field 'recruit' cannot be found` | Post 를 고치기 전에 board 화면을 덮어썼다 (단계 1 순서) |
+| 모집 인원을 넣어도 일반 글 | `PostForm` 에 `capacity` 없음 또는 `setCapacity` 누락 |
+| 포스터를 골랐는데 저장 안 됨 | form 에 `enctype="multipart/form-data"` 누락 (제공 화면 확인) |
+| 포스터가 엑스박스 | `WebConfig` 누락, 또는 시큐리티 `/uploads/**` 누락 |
+| 3MB 사진이 413 | `max-file-size` 설정 누락 (기본 1MB) |
+| 바구니 담기 404 | `@RequestMapping("/cart")` · `@PostMapping("/{postId}")` 확인 |
+| 모두 신청 확정이 400 | `@PostMapping("/confirm")` 누락 → `/{postId}` 가 "confirm" 을 번호로 읽다 실패 |
+| 실패했는데 일부만 신청됨 | `@Transactional` 누락 (단계 5) → 신청테스트.sql ② 초기화 후 다시 |
+
+## 18. GIT 업로드 — 올린 사진은 올리지 않는다
+
+`.gitignore` 에 `uploads/` 를 추가한다. 사용자가 올린 사진은 **소스 코드가 아니다.**
+
+```
+### [11주차] 업로드한 사진은 깃에 올리지 않는다 ###
+uploads/
+```
+
+## 수업에서 확인한 것 정리
+
+| 항목 | 핵심 |
+| ---- | ---- |
+| 모집글 | 새 테이블 없이 `Post` 확장, **정원 null = 일반 글**, 남은 자리는 **계산** |
+| SpEL 규칙 | `${post.recruit}` → `isRecruit()`, 필드 · DB 칸이 없어도 메서드만 있으면 된다 |
+| 파일 업로드 | `enctype="multipart/form-data"` + `MultipartFile` (이름으로 자동 연결) |
+| 업로드 보안 4원칙 | ① 확장자 허용 목록 ② 내용(매직 넘버) 확인 ③ 이름은 서버가(UUID) ④ 별도 폴더 |
+| 파일 보여 주기 | `WebConfig` `/uploads/**` → `file:uploads/`, DB 에는 **이름만** |
+| 크기 제한 | `max-file-size`(기본 1MB) · `max-request-size`(10MB), 넘으면 **413**, `-1` 금지 |
+| 세션 | 서버 메모리 보관함, 브라우저는 `JSESSIONID` 만, 바구니에는 **번호만** |
+| `LinkedHashSet` | 중복 없음 + 담은 순서 |
+| flash | `addFlashAttribute` → redirect 다음 화면에 딱 한 번 |
+| `save()` 마다 커밋 | 리포지토리 메서드는 각자 트랜잭션 → 묶지 않으면 **일부만 저장** |
+| 트랜잭션 | 성공 → 커밋, 예외 → 롤백, **`@Transactional` 한 줄** |
+| ACID | 원자성 · 일관성 · 격리성 · 지속성 |
+| 프록시 | 체크 예외 · 예외 삼키기 · 같은 클래스 호출 · 파일은 롤백 안 됨 |
+| 변경 감지 | 트랜잭션 안에서는 `set` 만 해도 커밋 때 UPDATE |
+
+---
+
+# 11주차 과제
+
+## 문제 — 신청기 개선하기 (신청 취소 & 신청자가 있는 모집글 삭제 정리)
+
+### ① 신청 취소
+
+- 내 신청 내역의 **취소** 버튼 → **신청 내역 삭제 + 신청 인원 - 1**
+- 제공 `cart.html` 의 연습 ① 주석을 풀면 버튼이 보인다 : `POST /cart/enrollments/{id}/cancel`
+- 조건
+  - **본인 신청만** 취소 (남의 것은 403)
+  - 두 작업을 **한 트랜잭션**으로
+  - **`save()` 없이 변경 감지**로 인원 줄이기
+- 힌트 : `enrollment.getPost()` → `setAppliedCount(... - 1)`
+
+| # | 하는 일 | 기대 결과 |
+| - | ------- | --------- |
+| 1 | student1 : B 신청 취소 | "신청이 취소되었습니다.", B 0/5 |
+| 2 | 남의 신청 번호로 취소 요청 | 403 |
+| 3 | 마감된 C 를 student3 이 취소 | C 가 다시 모집 중 |
+
+### ② 삭제 정리
+
+신청자가 있는 모집글을 삭제하면? → **500** (10주차 "댓글 달린 글 삭제" 와 같은 외래 키 문제)
+
+- 신청자가 있는 모집글 삭제 → **막기** (`?deleteError`)
+- 신청 내역이 있는 회원 삭제 → **막기**
+- 글을 지우면 **포스터 파일도 삭제** (`fileStore.delete`)
+
+**왜 cascade 가 아니라 막기일까?**
+
+| 연관 데이터 | 선택 | 이유 |
+| ----------- | ---- | ---- |
+| 글 → 댓글 (10주차) | 함께 삭제 | 글이 없으면 댓글도 의미 없음 |
+| **모집글 → 신청 내역** | **막기** | 신청한 사람이 있는데 몰래 사라지면 안 된다 |
+| **회원 → 신청 내역** | **막기** | 신청 인원 계산이 어긋난다 |
+
+| # | 하는 일 | 기대 결과 |
+| - | ------- | --------- |
+| 1 | 신청자 있는 모집글 삭제 | 안내 메시지 |
+| 2 | 신청자 없는 포스터 글 삭제 | 파일도 사라짐 |
+| 3 | 신청 내역 있는 회원 삭제 | 안내 메시지 (API 400) |
+
+## 풀이 순서
+
+### 1단계. 신청 취소 서비스 — EnrollmentService
+
+(import : `HttpStatus`, `AccessDeniedException`, `ResponseStatusException`)
+
+```java
+// [11주차 연습문제 ①] 신청 취소 : 신청 내역 삭제 + 신청 인원 - 1 (한 트랜잭션)
+@Transactional
+public Post cancel(Long enrollmentId, String username) {
+    Enrollment enrollment = enrollmentRepository.findById(enrollmentId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "신청 내역이 존재하지 않습니다."));
+    if (!enrollment.getMember().getUsername().equals(username)) { // 본인 신청만 → 남의 것은 403
+        throw new AccessDeniedException("본인의 신청만 취소할 수 있습니다.");
+    }
+    Post post = enrollment.getPost();
+    enrollmentRepository.delete(enrollment);           // ① DELETE 신청 내역
+    post.setAppliedCount(post.getAppliedCount() - 1);  // ② save() 없이 변경 감지 → 커밋 때 UPDATE
+    return post;
+}
+```
+
+| 조건 | 어떻게 |
+| ---- | ------ |
+| 본인 신청만 (남의 것은 403) | 9주차 `checkWriter()` 와 같은 방법 — **`AccessDeniedException`** → 403 화면 |
+| 없는 신청 번호 | `ResponseStatusException(NOT_FOUND)` → 404 화면 |
+| 두 작업을 한 트랜잭션으로 | **`@Transactional`** — 삭제 후 인원 감소가 실패하면 삭제도 롤백 |
+| `save()` 없이 인원 줄이기 | `enrollment.getPost()` 로 꺼낸 Post 는 **트랜잭션 안에서 관리 중** → `set` 만 하면 커밋 때 UPDATE |
+
+> `enrollment.getPost()` 는 **LAZY 프록시**다. 트랜잭션 안이라서 `getAppliedCount()` 를 부르는 순간 SELECT 가 나가고,
+> 그 뒤로는 JPA 가 지켜보는 엔티티가 된다.
+
+실제 로그 — `save()` 를 안 썼는데도 **커밋 때** UPDATE 가 나간다
+
+```
+Creating new transaction with name [com.example.demo.model.service.EnrollmentService.cancel]
+Participating in existing transaction         ← findById(신청)
+Participating in existing transaction         ← delete(신청)
+Committing JPA transaction on EntityManager   ← 커밋 순간에
+update posts set applied_count=?, ... where id=?     ← 변경 감지 (save 없음)
+delete from enrollments where id=?
+```
+
+### 2단계. 신청 취소 주소 — CartController
+
+```java
+@PostMapping("/enrollments/{id}/cancel") // [11주차 연습문제 ①] 신청 취소 : POST /cart/enrollments/7/cancel
+public String cancel(@PathVariable Long id, Principal principal, RedirectAttributes redirect) {
+    enrollmentService.cancel(id, principal.getName()); // 남의 신청이면 403, 없는 신청이면 404
+    redirect.addFlashAttribute("message", "신청이 취소되었습니다.");
+    return "redirect:/cart";
+}
+```
+
+`cart.html` 의 연습 ① 주석을 풀어 **취소 버튼**을 보이게 한다.
+
+```html
+<form th:action="@{/cart/enrollments/{id}/cancel(id=${e.id})}" method="post" class="m-0"
+      onsubmit="return confirm('신청을 취소하시겠습니까?');">
+    <button type="submit" class="btn btn-link btn-sm text-danger p-0"><i class="bi-x-circle me-1"></i>취소</button>
+</form>
+```
+
+**실행 결과** — student1 이 B 신청 취소 → "신청이 취소되었습니다.", 내 신청 내역에 A 만
+
+![신청 취소](docs/images/week11-cancel.png)
+
+### 3단계. 신청자가 있는지 확인하는 메서드 — EnrollmentRepository
+
+```java
+boolean existsByPost(Post post);       // [11주차 연습문제 ②] 이 모집글에 신청자가 있는지
+boolean existsByMember(Member member); // [11주차 연습문제 ②] 이 회원의 신청 내역이 있는지
+```
+
+10주차 회원 삭제 정리의 `existsByAuthor` 와 같은 방법 — **1개만 찾으면 멈춘다** (`limit 1`).
+
+### 4단계. 모집글 삭제 막기 + 포스터 파일 삭제 — PostService, BoardController
+
+```java
+@Autowired // [11주차 연습문제 ②] 신청자가 있는 모집글인지 확인
+private EnrollmentRepository enrollmentRepository;
+
+public void delete(Long id) { // 글 삭제 (본인 또는 관리자)
+    Post post = findById(id);
+    if (!isAdmin()) checkWriter(post); // 관리자는 누구 글이든 삭제 가능
+    // [11주차 연습문제 ②] 신청자가 있는 모집글은 삭제를 막는다 (댓글처럼 함께 지우지 않는다)
+    if (enrollmentRepository.existsByPost(post)) {
+        throw new IllegalStateException("신청자가 있는 모집글은 삭제할 수 없습니다.");
+    }
+    postRepository.delete(post); // DELETE
+    fileStore.delete(post.getPosterFile()); // [11주차 연습문제 ②] DB 삭제가 끝난 뒤 포스터 파일도 삭제
+}
+```
+
+> **순서가 중요하다** : 파일은 롤백이 안 된다(함정 ④). 파일을 먼저 지우고 DB 삭제가 실패하면 **글은 남았는데 포스터만 사라진다.**
+> 그래서 **DB 삭제가 끝난 다음** 파일을 지운다.
+
+`FileStore` 에는 `delete()` 를 추가했다. `../` 로 uploads 밖의 파일을 지우지 못하게 경로를 확인한다.
+
+```java
+// 파일 삭제 (글을 지울 때 · DB 저장이 실패했을 때)
+public void delete(String storedName) {
+    if (storedName == null || storedName.isBlank()) {
+        return;
+    }
+    Path target = root.resolve(storedName).normalize();
+    if (!target.startsWith(root)) { // ../ 로 다른 폴더 파일을 지우지 못하게
+        return;
+    }
+    try {
+        Files.deleteIfExists(target);
+    } catch (IOException e) {
+        // 파일 삭제 실패는 글 삭제를 막지 않는다 (쓰레기 파일만 남는다)
+    }
+}
+```
+
+컨트롤러는 예외를 잡아 **상세 화면 + `?deleteError`** 로 돌려보낸다.
+
+```java
+@PostMapping("/{id}/delete") // 삭제 처리 : POST /board/3/delete
+public String delete(@PathVariable Long id) {
+    try {
+        postService.delete(id);
+    } catch (IllegalStateException e) { // [11주차 연습문제 ②] 신청자가 있는 모집글
+        return "redirect:/board/" + id + "?deleteError"; // 상세 화면 + 안내 메시지
+    }
+    return "redirect:/board?deleted"; // 목록 + "삭제되었습니다"
+}
+```
+
+```html
+<!-- detail.html : [11주차 연습문제 ②] 신청자가 있는 모집글을 삭제하려고 할 때 -->
+<div th:if="${param.deleteError}" class="alert alert-danger py-2">… 신청자가 있는 모집글은 삭제할 수 없습니다.</div>
+```
+
+**실행 결과** — admin 이 신청자 있는 [A] 삭제 → 안내 메시지 (글은 그대로)
+
+![모집글 삭제 막기](docs/images/week11-post-delete-block.png)
+
+### 5단계. 회원 삭제 막기 — MemberService
+
+10주차 단계 6 의 검사 아래에 추가한다. 화면(6주차)과 API(7주차)가 **같은 서비스**를 쓰므로 한 번에 해결된다.
+
+```java
+@Autowired // [11주차 연습문제 ②] 신청 내역이 있는 회원인지 확인
+private EnrollmentRepository enrollmentRepository;
+
+// deleteMember() 안 : 글 · 댓글 검사 다음
+// [11주차 연습문제 ②] 신청 내역이 있는 회원도 막는다 (지우면 신청 인원 계산이 어긋난다)
+if (enrollmentRepository.existsByMember(member)) {
+    throw new IllegalArgumentException("신청 내역이 있는 회원은 삭제할 수 없습니다.");
+}
+```
+
+```
+DELETE /api/admin/members/2  (admin)
+400  {"error":"신청 내역이 있는 회원은 삭제할 수 없습니다."}
+```
+
+![회원 삭제 막기](docs/images/week11-member-delete-block.png)
+
+## 결과 정리
+
+| # | 하는 일 | 기대 결과 | 확인 |
+| - | ------- | --------- | ---- |
+| ① | student1 : B 신청 취소 | "신청이 취소되었습니다.", B 0/5 | ✅ |
+| ① | 남의 신청 번호로 취소 요청 | 403 | ✅ 403 (없는 번호는 404) |
+| ① | 마감된 C 를 student3 이 취소 | C 가 다시 모집 중 | ✅ C 0/1, 바구니 담기 버튼 다시 보임 |
+| ② | 신청자 있는 모집글 삭제 | 안내 메시지 | ✅ `/board/5?deleteError` |
+| ② | 신청자 없는 포스터 글 삭제 | 파일도 사라짐 | ✅ `uploads/` 에서 파일 삭제 |
+| ② | 신청 내역 있는 회원 삭제 | 안내 메시지 (API 400) | ✅ 화면 빨간 안내, API 400 |
+
+### 신청기 주소 전체 (11주차 기준)
+
+| 메서드 | 주소 | 권한 | 하는 일 |
+| ------ | ---- | ---- | ------- |
+| GET | `/board?page=&keyword=&type=` | 누구나 | 목록 + 모집 표시 |
+| GET | `/board/{id}` | 누구나 | 상세 + 모집 정보 · 포스터 · 댓글 |
+| GET · POST | `/board/write` | 로그인 | 글쓰기 (모집 인원 · 포스터) |
+| POST | `/board/{id}/delete` | 본인 또는 관리자 | 삭제 (신청자 있으면 막기, 포스터 파일도 삭제) |
+| GET | `/uploads/{파일이름}` | 누구나 | 포스터 이미지 |
+| GET | `/cart` | 로그인 | 신청 바구니 + 내 신청 내역 |
+| POST | `/cart/{postId}` | 로그인 | 바구니 담기 |
+| POST | `/cart/{postId}/remove` | 로그인 | 바구니 빼기 |
+| POST | `/cart/confirm` | 로그인 | 모두 신청 확정 (`@Transactional`) |
+| POST | `/cart/enrollments/{id}/cancel` | 본인만 | 신청 취소 |
+
+### 추가 · 수정한 파일
+
+| 구분 | 파일 | 핵심 |
+| ---- | ---- | ---- |
+| 단계 0 | `FileStore.java`, `cart.html`, `error/413.html`, `css/board.css`, `board/*.html` | 제공 코드 (저장소에는 같은 디자인으로 직접 작성) |
+| 단계 1 | `model/domain/Post.java` | `capacity`, `appliedCount`, `posterFile`, `isRecruit()` · `isFull()` · `getRemaining()` |
+| 단계 1 · 2 | `model/dto/PostForm.java` | `Integer capacity`, `MultipartFile poster` |
+| 단계 1 · 2 · 3 | `model/service/PostService.java` | 정원 검사, 포스터 저장, `findAllById()` |
+| 단계 2 | `config/WebConfig.java` (신규) | `/uploads/**` → `file:uploads/` |
+| 단계 2 | `config/SecurityConfig.java` | `/uploads/**` permitAll |
+| 단계 2 | `application.properties` | `max-file-size=5MB`, `max-request-size=10MB` |
+| 단계 3 · 4 | `controller/CartController.java` (신규) | 세션 바구니, 담기 · 빼기 · 확정 |
+| 단계 4 | `model/domain/Enrollment.java` (신규) | 외래 키 2개 (`member_id`, `post_id`) |
+| 단계 4 | `model/repository/EnrollmentRepository.java` (신규) | `existsByMemberAndPost`, `findByMember_UsernameOrderByIdDesc` |
+| 단계 4 · 5 | `model/service/EnrollmentService.java` (신규) | `confirm()` + **`@Transactional`** |
+| GIT | `.gitignore` | `uploads/` |
+| ① | `EnrollmentService.cancel()`, `CartController.cancel()`, `cart.html` | 본인 확인 + 변경 감지로 인원 - 1 |
+| ② | `EnrollmentRepository.existsByPost/existsByMember`, `PostService.delete()`, `BoardController.delete()`, `detail.html` | 신청자 있는 글 막기 + 포스터 파일 삭제 |
+| ② | `MemberService.deleteMember()` | 신청 내역 있는 회원 막기 (API 400) |
+
+이 과제로 확인한 것은 **`@Transactional` 안에서 꺼낸 엔티티는 `save()` 없이 값만 바꿔도 커밋 때 UPDATE 된다는 점(변경 감지)**,
+그리고 **연관 데이터는 "함께 삭제할지, 막을지" 를 데이터의 의미로 정해야 한다는 점** — 그리고 **파일은 DB 처럼 롤백되지 않으니 지우는 순서까지 챙겨야 한다는 점**이다.
